@@ -8,7 +8,7 @@ def main():
     person = e[uri]
     ext = False
     print "Dump of person - ", person
-    print person.dump(extended=ext)
+    print person.to_string(extended=ext)
     print person.get('foaf:name')
     person.load_same_as()
 #    print list(person.property_values())

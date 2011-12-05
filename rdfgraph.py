@@ -2,7 +2,7 @@
 Ripped off from Chris Gutteridge's Graphite: http://graphite.ecs.soton.ac.uk/
 """
 
-
+# Some constants
 DEFAULT_NAMESPACES = {
     'owl': 'http://www.w3.org/2002/07/owl#',
     'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
@@ -10,6 +10,7 @@ DEFAULT_NAMESPACES = {
 }
 
 class Graph(object):
+    "Represents an RDF graph."
     def __init__(self, uri=None, namespaces=None, engine=None):
         if not engine:
             engine = self.create_default_engine()
@@ -39,7 +40,11 @@ class Graph(object):
 
     def _parse_list(self, fn, data):
         lst = []
-
+        try:
+            for x in data:
+                lst.append(fn(x))
+        except TypeError:
+            lst.append(fn(data))
         return ResourceList(lst)
 
     def _parse_uri(self, data):
@@ -56,6 +61,10 @@ class Graph(object):
             # "dc:title"-ish
             return self.engine.expand_uri(uri)
         return uri
+    expand_uri = _expand_uri
+
+    def shrink_uri(self, uri):
+        return self.engine.shrink_uri(uri)
 
     def _parse_subject(self, sub):
         attempt = self._parse_uri(sub)
@@ -105,7 +114,7 @@ class Graph(object):
             self._parse_object(z),
         )
         for sub, pred, ob in triple_iter:
-            if isinstance(ob, URI):
+            if getattr(ob, 'is_uri', False):
                 ob = URIResource(self, ob)
             else:
                 ob = Resource(self, ob)
@@ -118,7 +127,7 @@ class Graph(object):
         for result in self.engine.sparql(query_text):
             output = {}
             for k, v in result.items():
-                if isinstance(v, URI):
+                if getattr(v, 'is_uri', False):
                     v = URIResource(self, v)
                 else:
                     v = Resource(self, v)
@@ -127,7 +136,6 @@ class Graph(object):
 
     def resource(self, uri):
         return URIResource(self, uri)
-
     get = resource
     __getitem__ = resource
 
@@ -223,7 +231,7 @@ class Resource(object):
         return self.datum == other.datum
 
     def __str__(self):
-        return str(self.datum)
+        return unicode(self.datum)
     def __repr__(self):
         return "Resource(" + repr(self.datum) + ")"
     def __cmp__(self, other):
@@ -235,7 +243,10 @@ class Resource(object):
     def as_uri(self):
         return URIResource(self.graph, self.datum)
 
-class URI(str): pass
+class URI(str):
+    """Used to label some strings as known URIs, so that they may be
+    distinguished from literals"""
+    is_uri = True
 
 class URIResource(Resource):
     def __init__(self, graph, uri):
@@ -253,7 +264,7 @@ class URIResource(Resource):
         return self.uri == other.uri
 
     def __str__(self):
-        return str(self.uri)
+        return "<"+str(self.uri)+">"
     def __repr__(self):
         return "URIResource(" + self.uri + ")"
 
@@ -313,8 +324,17 @@ class URIResource(Resource):
             self.graph.load(other.uri)
         return self
 
-    def dump(self, extended=True):
+    def to_string(self, extended=True):
+        s = ''
+        for prop, value in self.property_values():
+            s += "<span style='font-size:130%%'>&larr;</span> is <a title='%s' href='%s' style='text-decoration:none;color: green'>%s</a> of <span style='font-size:130%%'>&larr;</span> %s\n" % (
+                prop,
+                prop,
+                self.graph.shrink_uri(prop),
+                value,
+            )
         return self.graph.dump_resources(self._all_resources(), extended=extended)
+    dump = to_string
 
     def as_uri(self):
         return self
@@ -361,15 +381,21 @@ def runJVM():
         return
     jvm_args = []
     import os
+
+    if os.name == 'nt':
+        cp_sep = ';'
+        JVM_FILE = os.path.join(os.environ['JAVA_HOME'], 'bin','client','jvm.dll')
+    else:
+        cp_sep = ':'
+        JVM_FILE = os.path.join(os.environ['JAVA_HOME'], 'jre', 'lib', 'amd64', 'server', 'libjvm.so')
+
     if JAVA_CLASSPATH:
-        jvm_args.append("-Djava.class.path=" + ';'.join(
+        jvm_args.append("-Djava.class.path=" + cp_sep.join(
             map(os.path.abspath, JAVA_CLASSPATH))
         )
 
-    # XXX: WINDOWS ONLY (unless you fix this path)
-    JVM_DLL = os.path.join(os.environ['JAVA_HOME'], 'bin','client','jvm.dll')
 
-    startJVM(JVM_DLL, *jvm_args)
+    startJVM(JVM_FILE, *jvm_args)
     _jvm_running = True
 
 class JenaEngine(Engine):
@@ -402,6 +428,9 @@ class JenaEngine(Engine):
 
     def expand_uri(self, uri):
         return str(self.get_model().expandPrefix(JString(uri)))
+
+    def shrink_uri(self, uri):
+        return str(self.get_model().shortForm(JString(uri)))
 
     def _mk_resource(self, uri):
         "Make this Subject thing suitable to pass to Jena"
@@ -544,6 +573,4 @@ class JenaEngine(Engine):
                 yield result
         finally:
             qexec.close()
-
-
 
