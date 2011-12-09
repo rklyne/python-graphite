@@ -9,7 +9,25 @@ DEFAULT_NAMESPACES = {
     'xsd': 'http://www.w3.org/2001/XMLSchema#',
 }
 
-class Graph(object):
+def takes_list(f):
+    def parse_list(self, tpl):
+        for item in tpl:
+            if getattr(item, 'isResourceList', False) or isinstance(item, list):
+                 for resource in item:
+                    yield resource
+            elif getattr(item, 'isResource', False):
+                yield item
+            elif isinstance(item, (str, unicode)):
+                # Assume it's a URI. Maybe add some literal support later.
+                yield URIResource(self, item)
+            else:
+                yield item
+
+    def g(self, *t, **k):
+        l = parse_list(self, t)
+        return f(self, l, **k)
+    return g
+class SimpleGraph(object):
     "Represents an RDF graph."
     def __init__(self, uri=None, namespaces=None, engine=None):
         if not engine:
@@ -27,25 +45,21 @@ class Graph(object):
     def create_default_engine(self):
         return JenaEngine()
 
-    def load(self, *t, **k):
+    @takes_list
+    def load(self, lst, **k):
         reload = k.get('reload', False)
-        if not t:
-            raise RuntimeError("Load what?")
-        for datum in t:
-            # Assume URI for now. (rubbish)
-            if not reload and datum in self.loaded: continue
-            self.loaded[datum] = True
-            self.engine.load_uri(datum)
+        assert lst, "Load what?"
+        for datum in lst:
+            assert getattr(datum, 'isURIResource', False), "Can't load " +`datum`
+            if not reload and datum.uri in self.loaded: continue
+            self.loaded[datum.uri] = True
+            self.engine.load_uri(datum.uri)
         return self
 
-    def _parse_list(self, fn, data):
-        lst = []
-        try:
-            for x in data:
-                lst.append(fn(x))
-        except TypeError:
-            lst.append(fn(data))
-        return ResourceList(lst)
+    def load_sparql(self, endpoint, query):
+        return SparqlList(self._parse_sparql_result(
+            self.engine.load_sparql(endpoint, query)
+        ))
 
     def _parse_uri(self, data):
         if isinstance(data, Resource):
@@ -87,6 +101,7 @@ class Graph(object):
         return prop
 
     def _format_as_html(self, data):
+        # XXX: Not Implemented !!!
         return data
 
     def dump(self):
@@ -122,9 +137,10 @@ class Graph(object):
             yield sub, pred, ob
 
     def sparql(self, query_text):
-        return SparqlList(self._sparql(query_text))
-    def _sparql(self, query_text):
-        for result in self.engine.sparql(query_text):
+        return SparqlList(self._parse_sparql_result(self.engine.sparql(query_text)))
+
+    def _parse_sparql_result(self, result_obj):
+        for result in result_obj:
             output = {}
             for k, v in result.items():
                 if getattr(v, 'is_uri', False):
@@ -139,11 +155,13 @@ class Graph(object):
     get = resource
     __getitem__ = resource
 
-    def all_of_type(self, type):
-        return ResourceList(self._all_of_type(type))
-    def _all_of_type(self, type):
-        for x, y, z in self.triples(None, 'rdf:type', URIResource(self, type)):
-            yield x
+    @takes_list
+    def all_of_type(self, types):
+        return ResourceList(self._all_of_type(types))
+    def _all_of_type(self, types):
+        for type in types:
+            for x, y, z in self.triples(None, 'rdf:type', URIResource(self, type)):
+                yield x
 
     def add_ns(self, *t, **k):
         return self.add_namespaces(*t, **k)
@@ -151,6 +169,29 @@ class Graph(object):
     def add_namespaces(self, namespaces):
         for prefix, uri in namespaces.items():
             self.engine.add_namespace(prefix, uri)
+
+class SparqlStats(object):
+    "Stores stats on endpoint for deciding whether to send it a particular query."
+    def __init__(self, uri, graph):
+        self.uri = uri
+        self.graph = graph
+
+class SparqlGraph(SimpleGraph):
+    "And I shall call this module... Magic Spaqrls!"
+    def __init__(self, uri=None, namespaces=None, engine=None):
+        super(SparqlGraph, self).__init__(uri=None, namespaces=None, engine=None)
+
+    @takes_list
+    def add_endpoint(self, endpoints):
+        for resource in endpoints:
+            uri = resource.uri
+            self.endpoints[uri] = SparqlStats(uri, self)
+
+class Graph(SimpleGraph): pass
+
+# When SparqlGraph is good, make it the default.
+# class Graph(SparqlGraph): pass
+
 
 class Reiterable(object):
     def __init__(self, iterable):
@@ -177,6 +218,8 @@ class SparqlList(Reiterable):
     __getitem__ = get
 
 class ResourceList(Reiterable):
+    isResourceList = True
+
     def map(self, name, *t, **k):
         result = []
         for r in self:
@@ -218,6 +261,8 @@ class ResourceList(Reiterable):
 
 
 class Resource(object):
+    isResource = True
+
     def __init__(self, graph, datum):
         self.graph = graph
         self.datum = datum
@@ -249,6 +294,7 @@ class URI(str):
     is_uri = True
 
 class URIResource(Resource):
+    isURIResource = True
     def __init__(self, graph, uri):
         self.graph = graph
         if isinstance(uri, URIResource):
@@ -490,6 +536,30 @@ class JenaEngine(Engine):
         jena = jena.read(uri)
         self.jena_model = jena
 
+    def _iter_sparql_results(self, qexec):
+        try:
+            jresults = qexec.execSelect() # ResultsSet
+            while jresults.hasNext():
+                result = {}
+                soln = jresults.nextSolution() # QuerySolution
+                for name in soln.varNames():
+                    try:
+                        v = soln.getResource(name)   # Resource // Get a result variable - must be a resource
+                        if v:
+                            v = URI(v.getURI())
+                    except:
+                        v = soln.getLiteral(name)    # Literal  // Get a result variable - must be a literal
+                        v = v.getValue()
+                    result[name] = v
+                yield result
+        finally:
+            qexec.close()
+
+    def load_sparql(self, endpoint, query):
+        q_pkg = JPackage("com.hp.hpl.jena.query")
+        qexec = q_pkg.QueryExecutionFactory.sparqlService(JString(endpoint), JString(query))
+        return self._iter_sparql_results(qexec)
+
     def has_triple(self, x, y, z):
         self.debug(' '.join(["JENA has_triple ", `x`, `y`, `z`]))
         jena = self.get_model()
@@ -556,21 +626,5 @@ class JenaEngine(Engine):
         model = self.get_model()
         query = q_pkg.QueryFactory.create(query_text)
         qexec = q_pkg.QueryExecutionFactory.create(query, model)
-        try:
-            jresults = qexec.execSelect() # ResultsSet
-            while jresults.hasNext():
-                result = {}
-                soln = jresults.nextSolution() # QuerySolution
-                for name in soln.varNames():
-                    try:
-                        v = soln.getResource(name)   #Resource // Get a result variable - must be a resource
-                        if v:
-                            v = URI(v.getURI())
-                    except:
-                        v = soln.getLiteral(name)    #Literal  // Get a result variable - must be a literal
-                        v = v.getValue()
-                    result[name] = v
-                yield result
-        finally:
-            qexec.close()
+        return self._iter_sparql_results(qexec)
 

@@ -33,6 +33,41 @@ def main():
       sparql("PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT * WHERE { ?person a foaf:Person } LIMIT 5") \
       ['person']['foaf:name'].join(', ') \
 
+def main2():
+
+    imdb = 'http://data.linkedmdb.org/sparql'
+    dbpedia = 'http://dbpedia.org/sparql'
+
+    #
+    # Try playing with some Linked4 local govt. data
+    # ( http://linked4.org/lsd/ )
+    #
+    # TODO: Make it take these prefixes from the graph.
+    #
+    print rdfgraph.Graph().load_sparql(
+        "http://linked4.org/lsd/sparql",
+        """
+        PREFIX  rdf:            <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX  rdfs:           <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX  owl:            <http://www.w3.org/2002/07/owl#>
+        PREFIX  skos:           <http://www.w3.org/2004/02/skos/core#>
+        PREFIX  foaf:           <http://xmlns.com/foaf/0.1/>
+        PREFIX  void:           <http://rdfs.org/ns/void#>
+        PREFIX  qb:             <http://purl.org/linked-data/cube#>
+        PREFIX  dcterms:        <http://purl.org/dc/terms/>
+        PREFIX  interval:       <http://reference.data.gov.uk/def/intervals/>
+        PREFIX  org:            <http://www.w3.org/ns/org#>
+        PREFIX  vcard:          <http://www.w3.org/2006/vcard/ns#>
+        PREFIX  payment:        <http://reference.data.gov.uk/def/payment#>
+        PREFIX  council:        <http://reference.data.gov.uk/def/council#>
+        PREFIX  internal:       <http://www.epimorphics.com/vocabularies/spend/internal#>
+        PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+
+        SELECT * WHERE { ?person a foaf:Person } LIMIT 50"""
+
+    )['person']['foaf:name'].join(', ')
+
+
 
 if __name__ == '__main__':
     main()
