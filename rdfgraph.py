@@ -2,6 +2,38 @@
 Ripped off from Chris Gutteridge's Graphite: http://graphite.ecs.soton.ac.uk/
 """
 
+# CONFIG! (finally)
+
+class Config(object):
+    def __init__(self):
+        import os
+        base_dir = os.path.dirname(__file__)
+        import ConfigParser
+        cp = ConfigParser.SafeConfigParser(defaults={
+            'jena_libs': 'jena\\libs',
+            'jvm_lib': None,
+        })
+        cp.read([
+            'config.ini',
+        ])
+
+        libs_cfg = cp.get('config', 'jena_libs')
+        if libs_cfg:
+            self.jena_libs = os.path.join(base_dir, libs_cfg)
+        self.jena_libs = os.path.abspath(self.jena_libs)
+        self.jena_libs += '\\'
+
+        jvm_cfg = cp.get('config', 'jvm_lib')
+        if jvm_cfg:
+            # Have a good guess with relative paths - probably JAVA_HOME relative
+            java_base_dir = os.environ['JAVA_HOME'] or base_dir
+            self.jvm_file = os.path.join(java_base_dir, jvm_cfg)
+            self.jvm_file = os.path.abspath(self.jvm_file)
+        else:
+            self.jvm_file = None # Guess later
+
+Config = Config()
+
 # Some constants
 DEFAULT_NAMESPACES = {
     'owl': 'http://www.w3.org/2002/07/owl#',
@@ -56,10 +88,16 @@ class SimpleGraph(object):
             self.engine.load_uri(datum.uri)
         return self
 
-    def load_sparql(self, endpoint, query):
+    def read_sparql(self, endpoint, query):
+        "Make a SPARQL SELECT and traverse the results"
         return SparqlList(self._parse_sparql_result(
             self.engine.load_sparql(endpoint, query)
         ))
+
+    def load_sparql(self, endpoint, query):
+        "Load data into memory from a SPARQL CONSTRUCT"
+        self.engine.import_sparql(endpoint, query)
+        return self
 
     def _parse_uri(self, data):
         if isinstance(data, Resource):
@@ -409,17 +447,6 @@ from jpype import startJVM, shutdownJVM, ByteArrayCustomizer, \
   JBoolean, JByte, JChar, JClass, JClassUtil, JDouble, JException, \
   JFloat, JInt, JIterator, JLong, JObject, JPackage, JProxy, JString, \
   JavaException
-JENA_LIBS='..\\jena-2.6.4\\Jena-2.6.4\\lib\\'
-JAVA_CLASSPATH = [
-    JENA_LIBS+'jena-2.6.4.jar',
-    JENA_LIBS+'log4j-1.2.13.jar',
-    JENA_LIBS+'arq-2.8.7.jar',
-    JENA_LIBS+'slf4j-api-1.5.8.jar',
-    JENA_LIBS+'slf4j-log4j12-1.5.8.jar',
-    JENA_LIBS+'xercesImpl-2.7.1.jar',
-    JENA_LIBS+'iri-0.8.jar',
-    JENA_LIBS+'icu4j-3.4.4.jar',
-]
 _jvm_running = False
 def runJVM():
     global _jvm_running
@@ -430,18 +457,33 @@ def runJVM():
 
     if os.name == 'nt':
         cp_sep = ';'
-        JVM_FILE = os.path.join(os.environ['JAVA_HOME'], 'bin','client','jvm.dll')
     else:
         cp_sep = ':'
-        JVM_FILE = os.path.join(os.environ['JAVA_HOME'], 'jre', 'lib', 'amd64', 'server', 'libjvm.so')
 
-    if JAVA_CLASSPATH:
+    java_classpath = [
+        Config.jena_libs+'jena-2.6.4.jar',
+        Config.jena_libs+'log4j-1.2.13.jar',
+        Config.jena_libs+'arq-2.8.7.jar',
+        Config.jena_libs+'slf4j-api-1.5.8.jar',
+        Config.jena_libs+'slf4j-log4j12-1.5.8.jar',
+        Config.jena_libs+'xercesImpl-2.7.1.jar',
+        Config.jena_libs+'iri-0.8.jar',
+        Config.jena_libs+'icu4j-3.4.4.jar',
+    ]
+    jvm_file = Config.jvm_file
+    if not jvm_file:
+        if os.name == 'nt':
+            jvm_file = os.path.join(os.environ['JAVA_HOME'], 'bin','client','jvm.dll')
+        else:
+            jvm_file = os.path.join(os.environ['JAVA_HOME'], 'jre', 'lib', 'amd64', 'server', 'libjvm.so')
+
+    if java_classpath:
         jvm_args.append("-Djava.class.path=" + cp_sep.join(
-            map(os.path.abspath, JAVA_CLASSPATH))
+            map(os.path.abspath, java_classpath))
         )
 
 
-    startJVM(JVM_FILE, *jvm_args)
+    startJVM(jvm_file, *jvm_args)
     _jvm_running = True
 
 class JenaEngine(Engine):
