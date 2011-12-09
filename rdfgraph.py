@@ -39,6 +39,20 @@ DEFAULT_NAMESPACES = {
     'owl': 'http://www.w3.org/2002/07/owl#',
     'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     'xsd': 'http://www.w3.org/2001/XMLSchema#',
+    'yago': 'http://dbpedia.org/class/yago',
+    'dbpedia': 'http://dbpedia.org/resource/',
+    'rdfs':           'http://www.w3.org/2000/01/rdf-schema#',
+    'skos':           'http://www.w3.org/2004/02/skos/core#',
+    'foaf':           'http://xmlns.com/foaf/0.1/',
+    'void':           'http://rdfs.org/ns/void#',
+    'qb':             'http://purl.org/linked-data/cube#',
+    'dcterms':        'http://purl.org/dc/terms/',
+    'interval':       'http://reference.data.gov.uk/def/intervals/',
+    'org':            'http://www.w3.org/ns/org#',
+    'vcard':          'http://www.w3.org/2006/vcard/ns#',
+    'payment':        'http://reference.data.gov.uk/def/payment#',
+    'council':        'http://reference.data.gov.uk/def/council#',
+    'internal':       'http://www.epimorphics.com/vocabularies/spend/internal#',
 }
 
 def takes_list(f):
@@ -144,8 +158,11 @@ class SimpleGraph(object):
 
     def dump(self):
         return self._format_as_html(
-            self.engine.dump()
+            self.to_string()
         )
+
+    def to_string(self):
+        return self.engine.dump()
 
     def dump_resources(self, res, extended=False):
         return self._format_as_html(
@@ -323,9 +340,6 @@ class Resource(object):
     def value(self):
         return self.datum
 
-    def as_uri(self):
-        return URIResource(self.graph, self.datum)
-
 class URI(str):
     """Used to label some strings as known URIs, so that they may be
     distinguished from literals"""
@@ -348,7 +362,7 @@ class URIResource(Resource):
         return self.uri == other.uri
 
     def __str__(self):
-        return "<"+str(self.uri)+">"
+        return self.shrink_uri()
     def __repr__(self):
         return "URIResource(" + self.uri + ")"
 
@@ -356,13 +370,28 @@ class URIResource(Resource):
         return [self] + self.same_as_resources
 
     def properties(self):
+        seen = {}
         for y, z in self.property_values():
-            yield y
+            if y not in seen:
+                seen[y] = True
+                yield y
+
+    def inverse_properties(self):
+        seen = {}
+        for y, z in self.inverse_property_values():
+            if y not in seen:
+                seen[y] = True
+                yield y
 
     def property_values(self):
         for res in self._all_resources():
             for x, y, z in self.graph.triples(res, None, None):
                 yield y, z
+
+    def inverse_property_values(self):
+        for res in self._all_resources():
+            for x, y, z in self.graph.triples(None, None, res):
+                yield y, x
 
     def get(self, prop):
         "Get a property"
@@ -409,19 +438,54 @@ class URIResource(Resource):
         return self
 
     def to_string(self, extended=True):
-        s = ''
-        for prop, value in self.property_values():
-            s += "<span style='font-size:130%%'>&larr;</span> is <a title='%s' href='%s' style='text-decoration:none;color: green'>%s</a> of <span style='font-size:130%%'>&larr;</span> %s\n" % (
-                prop,
-                prop,
-                self.graph.shrink_uri(prop),
-                value,
-            )
         return self.graph.dump_resources(self._all_resources(), extended=extended)
-    dump = to_string
 
-    def as_uri(self):
-        return self
+    def short_html(self):
+        import cgi
+        import urllib
+        uri = self.uri
+        short_uri = self.shrink_uri()
+        return '<a href="?url=%s">%s</a>' % (
+            cgi.escape(urllib.quote(uri)),
+            cgi.escape(short_uri),
+        )
+
+    def dump(self, extended=True): # html
+        import cgi
+        def quote(s):
+            return cgi.escape(unicode(s))
+        def format(v):
+            if callable(getattr(v, 'short_html', None)):
+                return v.short_html()
+            return quote(v)
+        s = '<div class="resource">'
+        if self.has('foaf:name'):
+            s += '<h1>' + quote(self['foaf:name']) + '</h1>'
+        s += '<a href="?url=%s">%s</a>' % (
+            quote(self.uri),
+            quote(self.uri),
+        )
+        s += '<div class="properties">'
+        for prop in self.properties():
+            s += "<span style='font-size:130%%'>&rarr;</span> <a title='%s' href='%s' style='text-decoration:none;color: green'>%s</a> <span style='font-size:130%%'>&rarr;</span> %s<br/>\n" % (
+                quote(prop),
+                quote(prop),
+                self.graph.shrink_uri(prop),
+                ', '.join(map(format, self.all(prop))),
+            )
+        if extended:
+            for prop in self.inverse_properties():
+                s += "<span style='font-size:130%%'>&larr;</span> is <a title='%s' href='%s' style='text-decoration:none;color: green'>%s</a> of <span style='font-size:130%%'>&larr;</span> %s<br/>\n" % (
+                    quote(prop),
+                    quote(prop),
+                    self.graph.shrink_uri(prop),
+                    ', '.join(map(format, self.all('-'+prop))),
+                )
+        s += '</div></div>'
+        return s
+
+    def shrink_uri(self):
+        return self.graph.shrink_uri(self.uri)
 
 class Engine(object):
     """Defines an interface for an RDF triple store and query engine.
@@ -441,6 +505,8 @@ class Engine(object):
     def add_namespace(self, prefix, uri):
         raise NotImplementedError, "Register a namespace and it's prefix"
 
+import warnings
+warnings.filterwarnings("ignore", message="the sets module is deprecated")
 
 from jpype import startJVM, shutdownJVM, ByteArrayCustomizer, \
   CharArrayCustomizer, ConversionConfig, ConversionConfigClass, JArray, \
@@ -452,7 +518,11 @@ def runJVM():
     global _jvm_running
     if _jvm_running:
         return
-    jvm_args = []
+    jvm_args = [
+        # Be a bit more reasonable with Java memory
+        '-XX:MaxHeapFreeRatio=30',
+        '-XX:MinHeapFreeRatio=10',
+    ]
     import os
 
     if os.name == 'nt':
@@ -601,6 +671,11 @@ class JenaEngine(Engine):
         q_pkg = JPackage("com.hp.hpl.jena.query")
         qexec = q_pkg.QueryExecutionFactory.sparqlService(JString(endpoint), JString(query))
         return self._iter_sparql_results(qexec)
+
+    def import_sparql(self, endpoint, query):
+        q_pkg = JPackage("com.hp.hpl.jena.query")
+        qexec = q_pkg.QueryExecutionFactory.sparqlService(JString(endpoint), JString(query))
+        qexec.execConstruct(self.jena_model)
 
     def has_triple(self, x, y, z):
         self.debug(' '.join(["JENA has_triple ", `x`, `y`, `z`]))

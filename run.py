@@ -44,7 +44,8 @@ def main2():
     #
     # TODO: Make it take these prefixes from the graph.
     #
-    print rdfgraph.Graph().read_sparql(
+    graph = rdfgraph.Graph()
+    graph.load_sparql(
         "http://linked4.org/lsd/sparql",
         """
         PREFIX  rdf:            <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -62,10 +63,11 @@ def main2():
         PREFIX  council:        <http://reference.data.gov.uk/def/council#>
         PREFIX  internal:       <http://www.epimorphics.com/vocabularies/spend/internal#>
 
-        SELECT * WHERE { ?person a foaf:Person } LIMIT 50"""
+        CONSTRUCT {?x a ?y} WHERE { ?x a ?y } LIMIT 500"""
 
-    )['person']['foaf:name'].join(', ')
+    )
 
+    print graph.to_string()
 
 
 if __name__ == '__main__':
