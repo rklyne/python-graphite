@@ -5,6 +5,8 @@ Ripped off from Chris Gutteridge's Graphite: http://graphite.ecs.soton.ac.uk/
 # CONFIG! (finally)
 
 class Config(object):
+    sparql_debug = False
+
     def __init__(self):
         import os
         base_dir = os.path.dirname(__file__)
@@ -31,6 +33,11 @@ class Config(object):
             self.jvm_file = os.path.abspath(self.jvm_file)
         else:
             self.jvm_file = None # Guess later
+
+        try:
+            cp.get('config', 'sparql_debug')
+            self.sparql_debug = True
+        except: pass
 
 Config = Config()
 
@@ -358,9 +365,9 @@ class QueryGraph(SimpleGraph):
                 'z': qz,
             })
             for uri in endpoints:
-                print "Auto-query:", uri
-                print query
-                print self._triple_query_cache
+                if Config.sparql_debug:
+                    print "Auto-query:", uri
+                    print query
                 self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
                 self.load_sparql(uri, query)
         return super(QueryGraph, self).triples(x, y, z)
