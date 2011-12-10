@@ -70,5 +70,27 @@ def main2():
     print graph.to_string()
 
 
+def main3():
+
+    # Let's try some live exploration of a sparql endpoint - no query building!
+
+    dbpedia = 'http://dbpedia.org/sparql'
+
+    #
+    # Try playing with some Linked4 local govt. data
+    # ( http://linked4.org/lsd/ )
+    #
+    # TODO: Make it take these prefixes from the graph.
+    #
+    graph = rdfgraph.Graph()
+    graph.add_endpoint("http://linked4.org/lsd/sparql")
+    # Royal Borough of Windsor and Maidenhead
+    rbwm = 'http://www.rbwm.gov.uk/id/authority/rbwm#id'
+    print graph[rbwm]['rdfs:label']
+
+    print graph.to_string()
+
+    print graph[rbwm].to_string()
+
 if __name__ == '__main__':
-    main2()
+    main3()

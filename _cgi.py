@@ -38,7 +38,7 @@ Content-Type: text/html
 <body>
 """
 
-print unicode(person.dump()).encode('utf-8')
+print unicode(g.dump()).encode('utf-8')
 
 print """
 </body>

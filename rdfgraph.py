@@ -39,7 +39,7 @@ DEFAULT_NAMESPACES = {
     'owl': 'http://www.w3.org/2002/07/owl#',
     'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     'xsd': 'http://www.w3.org/2001/XMLSchema#',
-    'yago': 'http://dbpedia.org/class/yago',
+    'yago': 'http://dbpedia.org/class/yago/',
     'dbpedia': 'http://dbpedia.org/resource/',
     'rdfs':           'http://www.w3.org/2000/01/rdf-schema#',
     'skos':           'http://www.w3.org/2004/02/skos/core#',
@@ -120,7 +120,10 @@ class SimpleGraph(object):
             return None
         return self._expand_uri(data)
 
-    def _expand_uri(self, uri):
+    def _expand_uri(self, uri_in):
+        uri = uri_in
+        if getattr(uri, 'isURIResource', False):
+            uri = uri.uri
         import urlparse
         tpl = urlparse.urlparse(uri)
         if tpl[0] and tpl[2] and len(filter(None, tpl)) == 2:
@@ -130,6 +133,8 @@ class SimpleGraph(object):
     expand_uri = _expand_uri
 
     def shrink_uri(self, uri):
+        if getattr(uri, 'isURIResource', False):
+            uri = uri.uri
         return self.engine.shrink_uri(uri)
 
     def _parse_subject(self, sub):
@@ -156,21 +161,51 @@ class SimpleGraph(object):
         # XXX: Not Implemented !!!
         return data
 
-    def dump(self):
-        return self._format_as_html(
-            self.to_string()
-        )
+    def dump(self): # SimpleGraph
+        resources = {}
+        seen_resources = {}
+        for res, _, typ in self.triples(None, 'rdf:type', None):
+            if res.uri in seen_resources: continue
+            seen_resources[res.uri] = True
+            l = resources.setdefault(typ, [])
+            l.append(res)
+        import cgi
+        def quote(s):
+            return cgi.escape(unicode(s))
+        s = '<div class="graph">'
+        for typ in resources.keys():
+            s += '<div class="resource-type">'
+            typ_label = self[typ]['rdf:label']
+            if typ_label:
+                s += '<h2>'
+                s += quote(typ_label)
+                s += '</h2>'
+            else:
+                s += 'Type:'
+            s += ' <span class="uri">(<a href="%s">%s</a>)</span>' % (
+                quote(self.expand_uri(typ)),
+                quote(self.shrink_uri(typ)),
+            )
+            for res in resources[typ]:
+                s += res.dump()
+            s += '</div>'
+        s += '</div>'
+        return s
 
     def to_string(self):
         return self.engine.dump()
 
     def dump_resources(self, res, extended=False):
+        # Use this to fire a pre-load
+        for r in res:
+            self.triples(r.uri, None, None)
         return self._format_as_html(
             self.engine.dump_resources(res, extended=extended)
         )
 
-    def has_triple(self, *t):
+    def has_triple(self, *t): # SimpleGraph
         "Returns True if triples(*t) would return any triples."
+        # TODO: Optimise this! Should
         for x in self.triples(*t):
             return True
         return False
@@ -225,16 +260,23 @@ class SimpleGraph(object):
         for prefix, uri in namespaces.items():
             self.engine.add_namespace(prefix, uri)
 
+    def prefixes(self):
+        return self.engine.namespaces()
+    namespaces = prefixes
+
 class SparqlStats(object):
     "Stores stats on endpoint for deciding whether to send it a particular query."
     def __init__(self, uri, graph):
         self.uri = uri
         self.graph = graph
 
-class SparqlGraph(SimpleGraph):
+class QueryGraph(SimpleGraph):
     "And I shall call this module... Magic Spaqrls!"
-    def __init__(self, uri=None, namespaces=None, engine=None):
-        super(SparqlGraph, self).__init__(uri=None, namespaces=None, engine=None)
+    def __init__(self, uri=None, namespaces=None, engine=None, endpoint=None):
+        self.endpoints = {}
+        super(QueryGraph, self).__init__(uri=uri, namespaces=namespaces, engine=engine)
+        if endpoint:
+            self.add_endpoints(endpoints)
 
     @takes_list
     def add_endpoint(self, endpoints):
@@ -242,10 +284,54 @@ class SparqlGraph(SimpleGraph):
             uri = resource.uri
             self.endpoints[uri] = SparqlStats(uri, self)
 
-class Graph(SimpleGraph): pass
+    def select_endpoints(self, *t):
+        if len(t) == 3:
+            x, y, z = t
+            # TODO: Make this do something vaguely bright for triples queries.
+            pass
+        # TODO: Make this smart, using the query and SparqlStats.
+        return self.endpoints.keys()
 
-# When SparqlGraph is good, make it the default.
-# class Graph(SparqlGraph): pass
+    def _make_query(self, text):
+        query = ""
+        for prefix, uri in self.prefixes().items():
+            query += "PREFIX " + prefix + ": <" + uri + ">\n"
+        query += text
+        return query
+
+    def _make_query_value(self, v, uri=False):
+        if uri or getattr(v, 'is_uri', False) or getattr(v, 'isURIResource', False):
+            return "<"+unicode(v)+">"
+        else:
+            return '"'+unicode(v)+'"'
+
+    def triples(self, x, y, z):
+        if x:
+            qx = self._make_query_value(x, uri=True)
+        else:
+            qx = '?x'
+        if y:
+            qy = self._make_query_value(y, uri=True)
+        else:
+            qy = '?y'
+        if z:
+            qz = self._make_query_value(z)
+        else:
+            qz = '?z'
+        query = self._make_query("""
+            CONSTRUCT { %(x)s %(y)s %(z)s }
+            WHERE     { %(x)s %(y)s %(z)s }
+            """ % {
+            'x': qx,
+            'y': qy,
+            'z': qz,
+        })
+        print "Auto-query: " + query
+        for uri in self.select_endpoints(x, y, z):
+            self.load_sparql(uri, query)
+        return super(QueryGraph, self).triples(x, y, z)
+
+class Graph(QueryGraph): pass
 
 
 class Reiterable(object):
@@ -336,6 +422,7 @@ class Resource(object):
         return "Resource(" + repr(self.datum) + ")"
     def __cmp__(self, other):
         return cmp(self.datum, other.datum)
+    dump = __str__
 
     def value(self):
         return self.datum
@@ -450,7 +537,7 @@ class URIResource(Resource):
             cgi.escape(short_uri),
         )
 
-    def dump(self, extended=True): # html
+    def dump(self, extended=True): # URIResource
         import cgi
         def quote(s):
             return cgi.escape(unicode(s))
@@ -737,6 +824,12 @@ class JenaEngine(Engine):
 
     def add_namespace(self, prefix, uri):
         self.get_model().setNsPrefix(prefix, uri)
+
+    def namespaces(self):
+        ns_dict = {}
+        for prefix in self.get_model().getNsPrefixMap().entrySet():
+            ns_dict[str(prefix.getKey())] = URI(prefix.getValue())
+        return ns_dict
 
     def sparql(self, query_text):
         q_pkg = JPackage("com.hp.hpl.jena.query")
