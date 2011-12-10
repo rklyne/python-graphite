@@ -80,8 +80,6 @@ def main3():
     # Try playing with some Linked4 local govt. data
     # ( http://linked4.org/lsd/ )
     #
-    # TODO: Make it take these prefixes from the graph.
-    #
     graph = rdfgraph.Graph()
     graph.add_endpoint("http://linked4.org/lsd/sparql")
     # Royal Borough of Windsor and Maidenhead
@@ -91,6 +89,10 @@ def main3():
     print graph.to_string()
 
     print graph[rbwm].to_string()
+
+    # This will be cached :-D
+    print graph[rbwm]['rdfs:label']
+
 
 if __name__ == '__main__':
     main3()

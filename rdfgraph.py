@@ -274,6 +274,7 @@ class QueryGraph(SimpleGraph):
     "And I shall call this module... Magic Spaqrls!"
     def __init__(self, uri=None, namespaces=None, engine=None, endpoint=None):
         self.endpoints = {}
+        self._triple_query_cache = {}
         super(QueryGraph, self).__init__(uri=uri, namespaces=namespaces, engine=engine)
         if endpoint:
             self.add_endpoints(endpoints)
@@ -284,13 +285,38 @@ class QueryGraph(SimpleGraph):
             uri = resource.uri
             self.endpoints[uri] = SparqlStats(uri, self)
 
+    def _in_cache(self, endpoint, triple):
+        "Do a wild-card safe test for caching"
+        tests = []
+        cache = self._triple_query_cache.get(endpoint, None)
+        if not cache:
+            return False
+        x, y, z = triple
+        xs = [None]
+        ys = [None]
+        zs = [None]
+        if x is not None: xs.append(x)
+        if y is not None: ys.append(y)
+        if z is not None: zs.append(z)
+        for x in xs:
+            for y in ys:
+                for z in zs:
+                    t = (x, y, z)
+                    if t in cache:
+                        return True
+        return False
+
     def select_endpoints(self, *t):
+        all_endpoints = self.endpoints.keys()
+        endpoints = []
         if len(t) == 3:
-            x, y, z = t
-            # TODO: Make this do something vaguely bright for triples queries.
-            pass
-        # TODO: Make this smart, using the query and SparqlStats.
-        return self.endpoints.keys()
+            for ep in all_endpoints:
+                if not self._in_cache(ep, t):
+                    endpoints.append(ep)
+        else:
+            # TODO: Make this smart, parsing the query and using SparqlStats.
+            endpoints = all_endpoints
+        return endpoints
 
     def _make_query(self, text):
         query = ""
@@ -306,29 +332,37 @@ class QueryGraph(SimpleGraph):
             return '"'+unicode(v)+'"'
 
     def triples(self, x, y, z):
-        if x:
-            qx = self._make_query_value(x, uri=True)
-        else:
-            qx = '?x'
-        if y:
-            qy = self._make_query_value(y, uri=True)
-        else:
-            qy = '?y'
-        if z:
-            qz = self._make_query_value(z)
-        else:
-            qz = '?z'
-        query = self._make_query("""
-            CONSTRUCT { %(x)s %(y)s %(z)s }
-            WHERE     { %(x)s %(y)s %(z)s }
-            """ % {
-            'x': qx,
-            'y': qy,
-            'z': qz,
-        })
-        print "Auto-query: " + query
-        for uri in self.select_endpoints(x, y, z):
-            self.load_sparql(uri, query)
+        x = self._parse_subject(x)
+        y = self._parse_property(y)
+        z = self._parse_object(z)
+        endpoints = list(self.select_endpoints(x, y, z))
+        if endpoints:
+            if x:
+                qx = self._make_query_value(x, uri=True)
+            else:
+                qx = '?x'
+            if y:
+                qy = self._make_query_value(y, uri=True)
+            else:
+                qy = '?y'
+            if z:
+                qz = self._make_query_value(z)
+            else:
+                qz = '?z'
+            query = self._make_query("""
+                CONSTRUCT { %(x)s %(y)s %(z)s }
+                WHERE     { %(x)s %(y)s %(z)s }
+                """ % {
+                'x': qx,
+                'y': qy,
+                'z': qz,
+            })
+            for uri in endpoints:
+                print "Auto-query:", uri
+                print query
+                print self._triple_query_cache
+                self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
+                self.load_sparql(uri, query)
         return super(QueryGraph, self).triples(x, y, z)
 
 class Graph(QueryGraph): pass
@@ -440,8 +474,11 @@ class URIResource(Resource):
             uri = uri.uri
         assert isinstance(uri, (str, unicode)), uri
         uri = graph._expand_uri(uri)
-        self.uri = uri
+        self.uri = URI(uri)
         self.same_as_resources = []
+
+    def __hash__(self):
+        return hash(self.uri)
 
     def __eq__(self, other):
         if not isinstance(other, URIResource):
