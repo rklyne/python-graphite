@@ -80,6 +80,10 @@ def takes_list(f):
         l = parse_list(self, t)
         return f(self, l, **k)
     return g
+def gives_list(f):
+    def g(*t, **k):
+        return ResourceList(f(*t, **k))
+    return g
 class SimpleGraph(object):
     "Represents an RDF graph."
     def __init__(self, uri=None, namespaces=None, engine=None):
@@ -99,14 +103,18 @@ class SimpleGraph(object):
         return JenaEngine()
 
     @takes_list
-    def load(self, lst, **k):
+    def load(self, lst, allow_error=False, _cache=[], **k):
         reload = k.get('reload', False)
         assert lst, "Load what?"
         for datum in lst:
             assert getattr(datum, 'isURIResource', False), "Can't load " +`datum`
             if not reload and datum.uri in self.loaded: continue
             self.loaded[datum.uri] = True
-            self.engine.load_uri(datum.uri)
+            try:
+                self.engine.load_uri(datum.uri, allow_error=allow_error)
+            except:
+                if not allow_error:
+                    raise
         return self
 
     def read_sparql(self, endpoint, query):
@@ -217,9 +225,8 @@ class SimpleGraph(object):
             return True
         return False
 
-    def triples(self, *t):
-        return ResourceList(self._triples(*t))
-    def _triples(self, x, y, z):
+    @gives_list
+    def triples(self, x, y, z):
         triple_iter = self.engine.triples(
             self._parse_subject(x),
             self._parse_property(y),
@@ -252,13 +259,20 @@ class SimpleGraph(object):
     get = resource
     __getitem__ = resource
 
+    @gives_list
     @takes_list
     def all_of_type(self, types):
-        return ResourceList(self._all_of_type(types))
-    def _all_of_type(self, types):
         for type in types:
             for x, y, z in self.triples(None, 'rdf:type', URIResource(self, type)):
                 yield x
+
+    @gives_list
+    def all_types(self):
+        seen = {}
+        for x, y, z in self.triples(None, 'rdf:type', None):
+            if z in seen: continue
+            seen[z] = True
+            yield z
 
     def add_ns(self, *t, **k):
         return self.add_namespaces(*t, **k)
@@ -284,13 +298,15 @@ class QueryGraph(SimpleGraph):
         self._triple_query_cache = {}
         super(QueryGraph, self).__init__(uri=uri, namespaces=namespaces, engine=engine)
         if endpoint:
-            self.add_endpoints(endpoints)
+            self.add_endpoint(endpoint)
 
     @takes_list
     def add_endpoint(self, endpoints):
         for resource in endpoints:
             uri = resource.uri
             self.endpoints[uri] = SparqlStats(uri, self)
+        return self
+    add_endpoints = add_endpoint
 
     def _in_cache(self, endpoint, triple):
         "Do a wild-card safe test for caching"
@@ -426,6 +442,10 @@ class ResourceList(Reiterable):
         return ResourceList(self.map('get', prop))
     __getitem__ = get
 
+    def load(self):
+        self.map('load')
+        return self
+
     def load_same_as(self):
         self.map('load_same_as')
         return self
@@ -479,7 +499,7 @@ class URIResource(Resource):
         self.graph = graph
         if isinstance(uri, URIResource):
             uri = uri.uri
-        assert isinstance(uri, (str, unicode)), uri
+        assert isinstance(uri, (str, unicode)), (uri, type(uri))
         uri = graph._expand_uri(uri)
         self.uri = URI(uri)
         self.same_as_resources = []
@@ -559,6 +579,10 @@ class URIResource(Resource):
             return self.graph.has_triple(None, prop, self)
         else:
             return self.graph.has_triple(self, prop, None)
+
+    def load(self):
+        self.graph.load(self.uri, allow_error=True)
+        return self
 
     def load_same_as(self):
         for other in self.all('owl:sameAs'):
@@ -773,11 +797,15 @@ class JenaEngine(Engine):
             JPackage(self._jena_pkg_name).rdf.model.RDFNode,
         )
 
-    def load_uri(self, uri):
+    def load_uri(self, uri, allow_error=False):
         self.debug("JENA load "+uri)
         jena = self.get_model()
-        jena = jena.read(uri)
-        self.jena_model = jena
+        try:
+            jena = jena.read(uri)
+        except:
+            if not allow_error: raise
+        else:
+            self.jena_model = jena
 
     def _iter_sparql_results(self, qexec):
         try:
