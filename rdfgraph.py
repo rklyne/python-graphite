@@ -61,6 +61,10 @@ DEFAULT_NAMESPACES = {
     'council':        'http://reference.data.gov.uk/def/council#',
     'internal':       'http://www.epimorphics.com/vocabularies/spend/internal#',
 }
+RDFXML = 1001
+N3 = 1002
+NTRIPLE = 1003
+TURTLE = 1004
 
 def takes_list(f):
     def parse_list(self, tpl):
@@ -127,6 +131,28 @@ class SimpleGraph(object):
         "Load data into memory from a SPARQL CONSTRUCT"
         self.engine.import_sparql(endpoint, query)
         return self
+
+    def load_rdfxml(self, text):
+        self.engine.load_text(text, RDFXML)
+        return self
+    load_RDFXML = load_rdfxml
+
+    def load_turtle(self, text):
+        self.engine.load_text(text, TURTLE)
+        return self
+    load_ttl = load_turtle
+    load_TTL = load_turtle
+
+    def load_N3(self, text):
+        self.engine.load_text(text, N3)
+        return self
+    load_n3 = load_N3
+
+    def load_ntriple(self, text):
+        self.engine.load_text(text, NTRIPLE)
+        return self
+    load_ntriples = load_ntriple
+    load_NTRIPLE = load_ntriple
 
     def _parse_uri(self, data):
         if isinstance(data, Resource):
@@ -291,6 +317,8 @@ class SparqlStats(object):
         self.uri = uri
         self.graph = graph
 
+
+
 class QueryGraph(SimpleGraph):
     "And I shall call this module... Magic Spaqrls!"
     def __init__(self, uri=None, namespaces=None, engine=None, endpoint=None):
@@ -298,7 +326,7 @@ class QueryGraph(SimpleGraph):
         self._triple_query_cache = {}
         super(QueryGraph, self).__init__(uri=uri, namespaces=namespaces, engine=engine)
         if endpoint:
-            self.add_endpoint(endpoint)
+            self.add_endpoints(endpoint)
 
     @takes_list
     def add_endpoint(self, endpoints):
@@ -585,11 +613,15 @@ class URIResource(Resource):
         return self
 
     def load_same_as(self):
-        for other in self.all('owl:sameAs'):
-            other = URIResource(self.graph, other)
-            if other not in self.same_as_resources:
-                self.same_as_resources.append(other)
-            self.graph.load(other.uri)
+        for i in [
+            self.all('owl:sameAs'),
+            self.all('-owl:sameAs'),
+        ]:
+            for other in i:
+                other = URIResource(self.graph, other)
+                if other not in self.same_as_resources:
+                    self.same_as_resources.append(other)
+                self.graph.load(other.uri)
         return self
 
     def to_string(self, extended=True):
@@ -806,6 +838,22 @@ class JenaEngine(Engine):
             if not allow_error: raise
         else:
             self.jena_model = jena
+
+    def load_text(self, text, format=TURTLE):
+        if format == TURTLE:
+            format = "TTL"
+        elif format == N3:
+            format = "N3"
+        elif format == NTRIPLE:
+            format = "N-TRIPLE"
+        elif format == RDFXML:
+            format = "RDF/XML"
+        self.debug("JENA load text "+format)
+        jena = self.get_model()
+        uri = "tag:string-input"
+        input = JClass('java.io.StringReader')(text)
+        jena = jena.read(input, uri, format)
+        self.jena_model = jena
 
     def _iter_sparql_results(self, qexec):
         try:

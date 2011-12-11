@@ -82,16 +82,24 @@ def main3():
     #
     graph = rdfgraph.Graph()
     graph.add_endpoint("http://linked4.org/lsd/sparql")
+    graph.add_endpoint(dbpedia)
     # Royal Borough of Windsor and Maidenhead
     rbwm = 'http://www.rbwm.gov.uk/id/authority/rbwm#id'
-    print graph[rbwm]['rdfs:label']
+    rb = graph[rbwm].load_same_as()
+    print rb['rdfs:label']
 
     print graph.to_string()
 
-    print graph[rbwm].to_string()
+    print rb.to_string()
+    rb.load_same_as()
 
     # This will be cached :-D
     print graph[rbwm]['rdfs:label']
+
+def explore_types():
+    graph = rdfgraph.Graph()
+    graph.add_endpoint("http://linked4.org/lsd/sparql")
+    print graph.all_types().get('rdfs:label').join(', ')
 
 
 if __name__ == '__main__':
