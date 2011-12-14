@@ -1,3 +1,8 @@
+"""
+These test may seem a bit light. If they don't then they should.
+
+Jena is doing *all* the hard work here - I'm just testing that it's all wired up properly.
+"""
 
 import unittest
 import rdfgraph

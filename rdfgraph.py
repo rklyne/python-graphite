@@ -5,9 +5,15 @@ Ripped off from Chris Gutteridge's Graphite: http://graphite.ecs.soton.ac.uk/
 # CONFIG! (finally)
 
 class Config(object):
+    config_files = [
+        'config.ini',
+    ]
     sparql_debug = False
+    cache_dir = 'rdfgraph.cache'
 
     def __init__(self):
+        self.load()
+    def load(self):
         import os
         base_dir = os.path.dirname(__file__)
         import ConfigParser
@@ -15,9 +21,7 @@ class Config(object):
             'jena_libs': 'jena\\libs',
             'jvm_lib': None,
         })
-        cp.read([
-            'config.ini',
-        ])
+        cp.read(self.config_files)
 
         libs_cfg = cp.get('config', 'jena_libs')
         if libs_cfg:
@@ -38,6 +42,12 @@ class Config(object):
             cp.get('config', 'sparql_debug')
             self.sparql_debug = True
         except: pass
+        try:
+            cache_dir = cp.get('config', 'cache_dir')
+        except:
+            cache_dir = self.cache_dir
+        self.cache_dir = os.path.join(base_dir, cache_dir)
+        print "CACHE DIR:", self.cache_dir
 
 Config = Config()
 
@@ -66,7 +76,9 @@ N3 = 1002
 NTRIPLE = 1003
 TURTLE = 1004
 
+# Some decorators
 def takes_list(f):
+    "Parses a Resource iterator out of the tuple passed"
     def parse_list(self, tpl):
         for item in tpl:
             if getattr(item, 'isResourceList', False) or isinstance(item, list):
@@ -88,8 +100,112 @@ def gives_list(f):
     def g(*t, **k):
         return ResourceList(f(*t, **k))
     return g
+def memoise(f):
+    memos = {}
+    def g(self, *t):
+        memo = memos.setdefault(self, {})
+        if t in memo:
+            return memo[t]
+        r = f(self, *t)
+        memo[t] = r
+        return r
+    return g
+
+class FileCache(object):
+    index_name = 'index.marshal'
+    def __init__(self, path):
+        import os
+        self.dir = os.path.join(Config.cache_dir, path)
+        self.index = {}
+        if not os.path.isdir(self.dir):
+            os.makedirs(self.dir)
+        self.load_index(allow_error=True)
+    def open(self, name, *t, **k):
+        import os
+        return open(os.path.join(self.dir, name), *t, **k)
+    def has(self, name):
+        return name in self.index
+    __contains__ = has
+    def get_path(self, name):
+        return self.index[name]
+    def get(self, name):
+        if name not in self.index:
+            raise KeyError, name
+        with self.open(self.index[name], 'rb') as f:
+            return f.read().decode('utf-8')
+    __getitem__ = get
+    def set(self, name, data):
+        fname = self.index.get(name, None)
+        if fname is None:
+            fname = self._new_name()
+            self.index[name] = fname
+            self.save_index()
+        with self.open(fname, 'wb') as f:
+            if isinstance(data, unicode):
+                data = data.encode('utf-8')
+            f.write(data)
+    __setitem__ = set
+    def _new_name(self):
+        import os
+        import tempfile
+        fnum, fname = tempfile.mkstemp(prefix='d-', suffix='.rawdata', dir=self.dir)
+        return fname
+
+    def load_index(self, allow_error=True):
+        try:
+            f = self.open(self.index_name, 'rb')
+        except:
+            if not allow_error:
+                raise
+            return
+        import marshal
+        try:
+            self.index = marshal.load(f)
+        except:
+            if not allow_error:
+                raise
+        f.close()
+    def save_index(self):
+        f = self.open(self.index_name, 'wb')
+        try:
+            import marshal
+            marshal.dump(self.index, f)
+        finally:
+            f.close()
+
+class CacheFactory(object):
+    caches = {}
+    def __init__(self, klass=FileCache):
+        self.klass = klass
+    def get(self, name):
+        import os
+        if name not in self.caches:
+            self.caches[name] = self.klass(os.path.join(Config.cache_dir, name))
+        return self.caches[name]
+    __getitem__ = get
+
+caches = CacheFactory()
+
+class Context(object):
+    def __init__(self):
+        self.stack = []
+    def __enter__(self, *t):
+        self.stack.push(t)
+    def __exit__(self, x, y, z):
+        self.stack.pop()
+    def active(self):
+        return bool(self.stack)
+    def current(self):
+        return self.stack[-1]
+
+NoAutoQuery = Context()
+
 class SimpleGraph(object):
-    "Represents an RDF graph."
+    """Represents an RDF graph in memory.
+    Provides methods to load data and query in a nice way.
+    """
+    web_cache = caches['web']
+
     def __init__(self, uri=None, namespaces=None, engine=None):
         if not engine:
             engine = self.create_default_engine()
@@ -112,14 +228,35 @@ class SimpleGraph(object):
         assert lst, "Load what?"
         for datum in lst:
             assert getattr(datum, 'isURIResource', False), "Can't load " +`datum`
-            if not reload and datum.uri in self.loaded: continue
-            self.loaded[datum.uri] = True
             try:
-                self.engine.load_uri(datum.uri, allow_error=allow_error)
+                self._load_uri(datum.uri, reload=reload)
             except:
                 if not allow_error:
                     raise
         return self
+
+    def _load_uri(self, uri, **k):
+        "Load data from the web into the web cache and return the new model."
+        reload = k.get('reload', False)
+        # TODO: Strip the fragment from this URI before caching it.
+        if not reload and uri in self.loaded: return
+        self.loaded[uri] = True
+        if uri in self.web_cache:
+            try:
+                self.import_uri('file:///'+self.web_cache.get_path(uri), format=TURTLE)
+            except:
+                print "Error getting <"+uri+"> from cache"
+                raise
+        else:
+            g = SimpleGraph()
+            g.import_uri(uri)
+            data = g.to_string()
+            self.web_cache[uri] = data
+            self.import_uri('file:///'+self.web_cache.get_path(uri), format=TURTLE)
+
+    def import_uri(self, uri, **k):
+        "Load data directly from a URI into the Jena model (uncached)"
+        self.engine.load_uri(uri, **k)
 
     def read_sparql(self, endpoint, query):
         "Make a SPARQL SELECT and traverse the results"
@@ -320,7 +457,13 @@ class SparqlStats(object):
 
 
 class QueryGraph(SimpleGraph):
-    "And I shall call this module... Magic Spaqrls!"
+    """Extends SimpleGraph with a set of SPARQL endpoints and hooks that load
+    data from these endpoints as you query through the SimpleGraph interface.
+
+    The intent is to facilitate gathering exactly the data you want from
+    anywhere it happens to be and make it easy to interrogate as possible.
+
+    And I shall call this module... Magic Spaqrls!"""
     def __init__(self, uri=None, namespaces=None, engine=None, endpoint=None):
         self.endpoints = {}
         self._triple_query_cache = {}
@@ -358,6 +501,8 @@ class QueryGraph(SimpleGraph):
         return False
 
     def select_endpoints(self, *t):
+        if NoAutoQuery.active():
+            return []
         all_endpoints = self.endpoints.keys()
         endpoints = []
         if len(t) == 3:
@@ -488,6 +633,25 @@ class ResourceList(Reiterable):
 
     def join(self, sep=''):
         return sep.join(map(str, self))
+
+    # Set functions
+    @gives_list
+    @takes_list
+    def add(self, others):
+        for x in others:
+            yield x
+        for x in self:
+            yield x
+    union = add
+
+    @gives_list
+    @takes_list
+    def remove(self, others):
+        dct = dict.fromkeys(others)
+        for x in self:
+            if x not in dct:
+                yield x
+    intersection = remove
 
 
 class Resource(object):
@@ -829,29 +993,39 @@ class JenaEngine(Engine):
             JPackage(self._jena_pkg_name).rdf.model.RDFNode,
         )
 
-    def load_uri(self, uri, allow_error=False):
-        self.debug("JENA load "+uri)
-        jena = self.get_model()
-        try:
-            jena = jena.read(uri)
-        except:
-            if not allow_error: raise
-        else:
-            self.jena_model = jena
-
-    def load_text(self, text, format=TURTLE):
+    def get_jena_format(self, format):
         if format == TURTLE:
             format = "TTL"
         elif format == N3:
             format = "N3"
         elif format == NTRIPLE:
             format = "N-TRIPLE"
-        elif format == RDFXML:
+        elif format == RDFXML or format is None:
             format = "RDF/XML"
+        else:
+            raise RuntimeError("bad format", format)
+        return format
+
+    def load_uri(self, uri, format=None, allow_error=False):
+        self.debug("JENA load "+uri)
+        format = self.get_jena_format(format)
+        jena = self.get_model()
+        try:
+            jena = jena.read(uri, format)
+        except:
+            if not allow_error: raise
+        else:
+            self.jena_model = jena
+
+    def load_text(self, text, format=TURTLE):
+        format = self.get_jena_format(format)
         self.debug("JENA load text "+format)
         jena = self.get_model()
         uri = "tag:string-input"
-        input = JClass('java.io.StringReader')(text)
+        if isinstance(text, unicode):
+            text = text.encode('utf-8')
+        jstr = JString(text)
+        input = JClass('java.io.StringReader')(jstr)
         jena = jena.read(input, uri, format)
         self.jena_model = jena
 
@@ -937,7 +1111,6 @@ class JenaEngine(Engine):
 
     def to_string(self, format="TTL"):
         return self._dump_model(self.get_model(), format)
-        return unicode.encode(out.toString(), 'utf-8')
 
     def dump(self, *t, **k):
         return self.to_string(*t, **k)

@@ -14,7 +14,7 @@ def main():
 #    print list(person.property_values())
 #    people = list(e.all_of_type('foaf:Person'))
 #    print people
-    print person.dump(extended=ext)
+    print person.to_string(extended=ext)
 
 
     print "People"
@@ -23,7 +23,7 @@ def main():
     names = []
     for person in g.all_of_type('foaf:Person').sort('foaf:family_name'):
         print "-"*40
-        print person.dump()
+        print person.to_string()
         names.append(person['foaf:name'])
 
     print ', '.join(map(str, names))
@@ -103,4 +103,4 @@ def explore_types():
 
 
 if __name__ == '__main__':
-    main3()
+    main()
