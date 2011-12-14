@@ -47,7 +47,6 @@ class Config(object):
         except:
             cache_dir = self.cache_dir
         self.cache_dir = os.path.join(base_dir, cache_dir)
-        print "CACHE DIR:", self.cache_dir
 
 Config = Config()
 
@@ -190,7 +189,7 @@ class Context(object):
     def __init__(self):
         self.stack = []
     def __enter__(self, *t):
-        self.stack.push(t)
+        self.stack.append(t)
     def __exit__(self, x, y, z):
         self.stack.pop()
     def active(self):
@@ -388,6 +387,14 @@ class SimpleGraph(object):
             return True
         return False
 
+    def set_triple(self, x, y, z):
+        triple_iter = self.engine.set_triple(
+            self._parse_subject(x),
+            self._parse_property(y),
+            self._parse_object(z),
+        )
+    add = set_triple
+
     @gives_list
     def triples(self, x, y, z):
         triple_iter = self.engine.triples(
@@ -448,13 +455,83 @@ class SimpleGraph(object):
         return self.engine.namespaces()
     namespaces = prefixes
 
+def no_auto_query(f):
+    def g(*t, **k):
+        with NoAutoQuery:
+            return f(*t, **k)
+    return g
 class SparqlStats(object):
     "Stores stats on endpoint for deciding whether to send it a particular query."
     def __init__(self, uri, graph):
         self.uri = uri
         self.graph = graph
+        self.data = SimpleGraph()
+        self.data.add_ns({
+            'stat': 'http://id.rklyne.net/ns/sparql_stats#',
+        })
+        self.node = self.data[uri]
 
+    def use_for_triple(self, triple):
+        return True
 
+    def use_for_query(self, query):
+        return True
+
+class FancyStats(SparqlStats):
+    @no_auto_query
+    def use_for_triple(self, triple):
+        if triple[1:] == (None, None):
+            return self.knows_resource(triple[0])
+        elif triple[:2] == (None, None):
+            return self.knows_subject(triple[2])
+        elif triple[0] == None and triple[2] == None:
+            return self.knows_resource(triple[0])
+        return True
+
+    @no_auto_query
+    def use_for_query(self, query):
+        # TODO: Make this smart, parsing the query and using stats.
+        return True
+
+    def sparql(self, query):
+        return self.graph.read_sparql(self.uri, query)
+
+    def knows_resource(self, resource):
+        return self.knows_func(
+            'stat:knows_resource',
+            'stat:checked_resources',
+            "SELECT DISTINCT ?x WHERE { ?x ?r ?o }",
+            resource
+        )
+    def knows_property(self, resource):
+        return self.knows_func(
+            'stat:knows_property',
+            'stat:checked_properties',
+            "SELECT DISTINCT ?x WHERE { ?s ?x ?o }",
+            resource
+        )
+    def knows_subject(self, resource):
+        return self.knows_func(
+            'stat:knows_subject',
+            'stat:checked_subject',
+            "SELECT DISTINCT ?x WHERE { ?s ?r ?x }",
+            resource
+        )
+    @no_auto_query
+    def knows_func(self, knows, checked, query, resource):
+        if resource is None:
+            # This would be silly for a stats class
+            return False
+        n = self.node
+        known = n.all(knows)
+        if resource not in known:
+            if not n.has(checked):
+                for r in self.sparql(query):
+                    n[knows] = r['x']
+                n[checked] = "yes"
+                return resource in n.all(knows)
+            return False
+        return True
 
 class QueryGraph(SimpleGraph):
     """Extends SimpleGraph with a set of SPARQL endpoints and hooks that load
@@ -464,6 +541,8 @@ class QueryGraph(SimpleGraph):
     anywhere it happens to be and make it easy to interrogate as possible.
 
     And I shall call this module... Magic Spaqrls!"""
+    stats_class = SparqlStats
+
     def __init__(self, uri=None, namespaces=None, engine=None, endpoint=None):
         self.endpoints = {}
         self._triple_query_cache = {}
@@ -475,7 +554,7 @@ class QueryGraph(SimpleGraph):
     def add_endpoint(self, endpoints):
         for resource in endpoints:
             uri = resource.uri
-            self.endpoints[uri] = SparqlStats(uri, self)
+            self.endpoints[uri] = self.stats_class(uri, self)
         return self
     add_endpoints = add_endpoint
 
@@ -505,13 +584,17 @@ class QueryGraph(SimpleGraph):
             return []
         all_endpoints = self.endpoints.keys()
         endpoints = []
-        if len(t) == 3:
-            for ep in all_endpoints:
+        if len(t) == 0:
+            raise RuntimeError("select for what?")
+        elif len(t) == 3:
+            for ep, stats in self.endpoints.items():
                 if not self._in_cache(ep, t):
-                    endpoints.append(ep)
+                    if stats.use_for_triple(t):
+                        endpoints.append(ep)
         else:
-            # TODO: Make this smart, parsing the query and using SparqlStats.
-            endpoints = all_endpoints
+            for ep, stats in self.endpoints.items():
+                if stats.use_for_query(t[0]):
+                    endpoints.append(ep)
         return endpoints
 
     def _make_query(self, text):
@@ -560,6 +643,9 @@ class QueryGraph(SimpleGraph):
                 self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
                 self.load_sparql(uri, query)
         return super(QueryGraph, self).triples(x, y, z)
+
+class ExtendedQueryGraph(QueryGraph):
+    stats_class = FancyStats
 
 class Graph(QueryGraph): pass
 
@@ -742,6 +828,11 @@ class URIResource(Resource):
             return x
         return None
     __getitem__ = get
+
+    def set(self, prop, obj):
+        self.graph.add(self, prop, obj)
+        return self
+    __setitem__ = set
 
     def type(self):
         return self['rdf:type']
@@ -1065,6 +1156,19 @@ class JenaEngine(Engine):
         pred = self._mk_property(y)
         ob = self._mk_object(z)
         return bool(jena.contains())
+
+    def set_triple(self, x, y, z):
+        self.debug(' '.join(["JENA add_triple ", `x`, `y`, `z`]))
+        jena = self.get_model()
+        sub = self._mk_resource(x)
+        pred = self._mk_property(y)
+        ob = self._mk_object(z)
+        stmt = jena.createStatement(
+            sub,
+            pred,
+            ob,
+        )
+        jena.add(stmt)
 
     def triples(self, x, y, z):
         self.debug(' '.join(["JENA triples ", `x`, `y`, `z`]))
