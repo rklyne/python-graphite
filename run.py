@@ -96,6 +96,22 @@ def main3():
     # This will be cached :-D
     print graph[rbwm]['rdfs:label']
 
+
+def main4():
+
+    graph = rdfgraph.Graph()
+    graph.add_endpoint("http://services.data.gov.uk/reference/sparql")
+#    graph.add_endpoint("http://linked4.org/lsd/sparql")
+
+    types = [
+        (d.get('z', None), d['c'])
+        for d in
+        graph.sparql("select ?z (count(distinct ?x) as ?c) where {?x a ?z} group by ?z order by desc(?c) limit 10")
+    ]
+
+    print "\n".join(map(str, types))
+
+
 def explore_types():
     graph = rdfgraph.Graph()
     graph.add_endpoint("http://linked4.org/lsd/sparql")
@@ -103,4 +119,4 @@ def explore_types():
 
 
 if __name__ == '__main__':
-    main()
+    main4()

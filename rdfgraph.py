@@ -204,7 +204,6 @@ class SimpleGraph(object):
     Provides methods to load data and query in a nice way.
     """
     web_cache = caches['web']
-
     def __init__(self, uri=None, namespaces=None, engine=None):
         if not engine:
             engine = self.create_default_engine()
@@ -228,7 +227,7 @@ class SimpleGraph(object):
         for datum in lst:
             assert getattr(datum, 'isURIResource', False), "Can't load " +`datum`
             try:
-                self._load_uri(datum.uri, reload=reload)
+                self._load_uri(datum.uri, reload=reload, format=k.get('format', None))
             except:
                 if not allow_error:
                     raise
@@ -237,6 +236,8 @@ class SimpleGraph(object):
     def _load_uri(self, uri, **k):
         "Load data from the web into the web cache and return the new model."
         reload = k.get('reload', False)
+        if 'format' in k:
+            k['format'] = self._parse_rdf_format(k['format'])
         # TODO: Strip the fragment from this URI before caching it.
         if not reload and uri in self.loaded: return
         self.loaded[uri] = True
@@ -248,7 +249,7 @@ class SimpleGraph(object):
                 raise
         else:
             g = SimpleGraph()
-            g.import_uri(uri)
+            g.import_uri(uri, format=k.get('format', None))
             data = g.to_string()
             self.web_cache[uri] = data
             self.import_uri('file:///'+self.web_cache.get_path(uri), format=TURTLE)
@@ -267,6 +268,34 @@ class SimpleGraph(object):
         "Load data into memory from a SPARQL CONSTRUCT"
         self.engine.import_sparql(endpoint, query)
         return self
+
+    def _parse_rdf_format(self, format):
+        if format is None: return None
+        if not isinstance(format, str): return format
+        f = format.lower()
+        if f in [
+            'rdfxml',
+            'rdf/xml',
+            'xml',
+        ]:
+            return RDFXML
+        elif f in [
+            'turtle',
+            'ttl',
+        ]:
+            return TURTLE
+        elif f in [
+            'ntriples',
+            'n-triples',
+            'ntriple',
+        ]:
+            return NTRIPLE
+        elif f in [
+            'n3',
+        ]:
+            return N3
+        else:
+            raise RuntimeError("bad format")
 
     def load_rdfxml(self, text):
         self.engine.load_text(text, RDFXML)
@@ -382,7 +411,7 @@ class SimpleGraph(object):
 
     def has_triple(self, *t): # SimpleGraph
         "Returns True if triples(*t) would return any triples."
-        # TODO: Optimise this! Should
+        # TODO: Optimise this! Should use 'has...' in the engine.
         for x in self.triples(*t):
             return True
         return False
@@ -405,12 +434,10 @@ class SimpleGraph(object):
         for sub, pred, ob in triple_iter:
             if getattr(ob, 'is_uri', False):
                 ob = URIResource(self, ob)
-            else:
-                ob = Resource(self, ob)
             sub = URIResource(self, sub)
             yield sub, pred, ob
 
-    def sparql(self, query_text):
+    def sparql(self, query_text): # SimpleGraph
         return SparqlList(self._parse_sparql_result(self.engine.sparql(query_text)))
 
     def _parse_sparql_result(self, result_obj):
@@ -419,8 +446,6 @@ class SimpleGraph(object):
             for k, v in result.items():
                 if getattr(v, 'is_uri', False):
                     v = URIResource(self, v)
-                else:
-                    v = Resource(self, v)
                 output[k] = v
             yield output
 
@@ -465,11 +490,6 @@ class SparqlStats(object):
     def __init__(self, uri, graph):
         self.uri = uri
         self.graph = graph
-        self.data = SimpleGraph()
-        self.data.add_ns({
-            'stat': 'http://id.rklyne.net/ns/sparql_stats#',
-        })
-        self.node = self.data[uri]
 
     def use_for_triple(self, triple):
         return True
@@ -477,7 +497,29 @@ class SparqlStats(object):
     def use_for_query(self, query):
         return True
 
+
+
 class FancyStats(SparqlStats):
+    all_templates = {
+        #
+        # utility:{
+        #    suitability query: [
+        #
+        #    ]
+        # }
+        #
+        # utility specifies capture patterns for querying
+        (None, None, '?x'): None,
+    }
+
+    def __init__(self, *t, **k):
+        super(FancyStats, self).__init__(*t, **k)
+        self.data = SimpleGraph()
+        self.data.add_ns({
+            'stat': 'http://id.rklyne.net/ns/sparql_stats#',
+        })
+        self.node = self.data[uri]
+
     @no_auto_query
     def use_for_triple(self, triple):
         if triple[1:] == (None, None):
@@ -493,16 +535,24 @@ class FancyStats(SparqlStats):
         # TODO: Make this smart, parsing the query and using stats.
         return True
 
-    def sparql(self, query):
+    def sparql(self, query): # FancyStats
         return self.graph.read_sparql(self.uri, query)
 
+    # These queries are rubbish. I should do something better
     def knows_resource(self, resource):
+
+        t = resource.type()
+        if t:
+            result = self.knows_type()
+            if result is not None:
+                return result
         return self.knows_func(
             'stat:knows_resource',
             'stat:checked_resources',
             "SELECT DISTINCT ?x WHERE { ?x ?r ?o }",
             resource
         )
+
     def knows_property(self, resource):
         return self.knows_func(
             'stat:knows_property',
@@ -644,6 +694,30 @@ class QueryGraph(SimpleGraph):
                 self.load_sparql(uri, query)
         return super(QueryGraph, self).triples(x, y, z)
 
+    def sparql(self, query, *t, **k):
+        # TODO: Detect grouping and handle count aggregation differently
+        iter = self._sparql(query, *t, **k)
+        return SparqlList(iter)
+    def _sparql(self, query):
+        for x in super(QueryGraph, self).sparql(query):
+            yield x
+        for uri in self.select_endpoints(query):
+            for x in super(QueryGraph, self).read_sparql(uri, query):
+                yield x
+
+    def _load_all_sparql(self, query):
+        for uri in self.select_endpoints(query):
+            for x in super(QueryGraph, self).read_sparql(uri, query):
+                yield x
+
+    # SPARQL query methods
+    def describe(self, query):
+        self._load_all_sparql("describe "+query)
+        return self
+    def construct(self, query):
+        self._load_all_sparql("construct "+query)
+        return self
+
 class ExtendedQueryGraph(QueryGraph):
     stats_class = FancyStats
 
@@ -674,8 +748,18 @@ class SparqlList(Reiterable):
         return ResourceList(self._get(var))
     __getitem__ = get
 
+    def count(self, var):
+        total = 0
+        for dct in self:
+            total += dct[var]
+        return total
+
 class ResourceList(Reiterable):
     isResourceList = True
+
+    def first(self):
+        for x in self:
+            return x
 
     def map(self, name, *t, **k):
         result = []
@@ -791,9 +875,11 @@ class URIResource(Resource):
         return self.uri == other.uri
 
     def __str__(self):
-        return self.shrink_uri()
+        return self.expand_uri()
     def __repr__(self):
         return "URIResource(" + self.uri + ")"
+    def __cmp__(self, other):
+        return cmp(self.uri, other.uri)
 
     def _all_resources(self):
         return [self] + self.same_as_resources
@@ -928,6 +1014,8 @@ class URIResource(Resource):
 
     def shrink_uri(self):
         return self.graph.shrink_uri(self.uri)
+    def expand_uri(self):
+        return self.graph.expand_uri(self.uri)
 
 class Engine(object):
     """Defines an interface for an RDF triple store and query engine.
@@ -954,7 +1042,7 @@ from jpype import startJVM, shutdownJVM, ByteArrayCustomizer, \
   CharArrayCustomizer, ConversionConfig, ConversionConfigClass, JArray, \
   JBoolean, JByte, JChar, JClass, JClassUtil, JDouble, JException, \
   JFloat, JInt, JIterator, JLong, JObject, JPackage, JProxy, JString, \
-  JavaException
+  JavaException, java
 _jvm_running = False
 def runJVM():
     global _jvm_running
@@ -975,12 +1063,13 @@ def runJVM():
     java_classpath = [
         Config.jena_libs+'jena-2.6.4.jar',
         Config.jena_libs+'log4j-1.2.13.jar',
-        Config.jena_libs+'arq-2.8.7.jar',
+        Config.jena_libs+'arq-2.8.8.jar',
         Config.jena_libs+'slf4j-api-1.5.8.jar',
         Config.jena_libs+'slf4j-log4j12-1.5.8.jar',
         Config.jena_libs+'xercesImpl-2.7.1.jar',
         Config.jena_libs+'iri-0.8.jar',
         Config.jena_libs+'icu4j-3.4.4.jar',
+        Config.jena_libs+'stax-api-1.0.1.jar',
     ]
     jvm_file = Config.jvm_file
     if not jvm_file:
@@ -1133,7 +1222,7 @@ class JenaEngine(Engine):
                             v = URI(v.getURI())
                     except:
                         v = soln.getLiteral(name)    # Literal  // Get a result variable - must be a literal
-                        v = v.getValue()
+                        v = self._parse_literal(v)
                     result[name] = v
                 yield result
         finally:
@@ -1170,6 +1259,19 @@ class JenaEngine(Engine):
         )
         jena.add(stmt)
 
+    def _parse_literal(self, lit):
+        if isinstance(lit, JClass("com.hp.hpl.jena.rdf.model.Literal")):
+            lit = lit.getValue()
+        if isinstance(lit, java.lang.Integer):
+            return lit.intValue()
+        elif isinstance(lit, java.lang.String):
+            return lit.toString()
+        elif isinstance(lit, java.lang.Float):
+            return lit.floatValue()
+        elif isinstance(lit, java.lang.Boolean):
+            return lit.boolValue()
+        return lit
+
     def triples(self, x, y, z):
         self.debug(' '.join(["JENA triples ", `x`, `y`, `z`]))
         jena = self.get_model()
@@ -1189,7 +1291,7 @@ class JenaEngine(Engine):
             if c.isResource():
                 c = URI(c.getURI())
             else:
-                c = c.getValue()
+                c = self._parse_literal(c.getValue())
             yield a, b, c
 
     def _dump_model(self, model, format="TTL"):
@@ -1228,7 +1330,7 @@ class JenaEngine(Engine):
             ns_dict[str(prefix.getKey())] = URI(prefix.getValue())
         return ns_dict
 
-    def sparql(self, query_text):
+    def sparql(self, query_text): # JenaEngine
         q_pkg = JPackage("com.hp.hpl.jena.query")
         model = self.get_model()
         query = q_pkg.QueryFactory.create(query_text)
