@@ -74,6 +74,7 @@ RDFXML = 1001
 N3 = 1002
 NTRIPLE = 1003
 TURTLE = 1004
+HTML = 1005 # Will support RDFa eventually.
 
 # Some decorators
 def takes_list(f):
@@ -233,6 +234,38 @@ class SimpleGraph(object):
                     raise
         return self
 
+    def _sniff_format(self, data, type=None):
+        if type and type not in [
+            'text/plain',
+            'application/octet-stream',
+        ]:
+            if type in [
+                'text/turtle',
+            ]:
+                return TURTLE
+            elif type in [
+                'application/rdf+xml',
+            ]:
+                return RDFXML
+            elif type in [
+                'text/n3',
+            ]:
+                return N3
+        all_data = data
+        data = data[:200]
+        ldata = data.lower()
+        if ldata.find('<html>') >= 0:
+            return HTML
+        if ldata.find('<rdf:rdf>') >= 0:
+            return RDFXML
+        if ldata.find('@prefix') >= 0:
+            return TURTLE
+        if ldata.find('/rdf>') >= 0:
+            return RDFXML
+        if ldata.find(':rdf>') >= 0:
+            return RDFXML
+        return TURTLE
+
     def _load_uri(self, uri, **k):
         "Load data from the web into the web cache and return the new model."
         reload = k.get('reload', False)
@@ -250,8 +283,17 @@ class SimpleGraph(object):
                 print "Error getting <"+uri+"> from cache"
                 raise
         else:
+            import urllib
+            f = urllib.urlopen(uri)
+            msg = f.info()
+            data = f.read(100)
+            mime = msg.getheader("content-type")
+            format = self._sniff_format(data, type=mime)
+            if format == HTML:
+                raise RuntimeError("Got HTML data", uri, data)
+            data += f.read()
             g = SimpleGraph()
-            g.import_uri(uri, format=k.get('format', None))
+            g.engine.load_text(data, format=format)
             data = g.to_string()
             self.web_cache[uri] = data
             self.import_uri('file:///'+self.web_cache.get_path(uri), format=TURTLE)
@@ -1018,6 +1060,12 @@ class URIResource(Resource):
         return self.graph.shrink_uri(self.uri)
     def expand_uri(self):
         return self.graph.expand_uri(self.uri)
+
+    def in_ns(self, ns):
+        uri = self.expand_uri()
+        prefixes = self.graph.prefixes()
+        ns = prefixes.get(ns, ns)
+        return uri.startswith(ns)
 
 class Engine(object):
     """Defines an interface for an RDF triple store and query engine.
