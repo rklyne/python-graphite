@@ -18,7 +18,7 @@ class Config(object):
         base_dir = os.path.dirname(__file__)
         import ConfigParser
         cp = ConfigParser.SafeConfigParser(defaults={
-            'jena_libs': 'jena\\libs',
+            'jena_libs': 'jena/libs',
             'jvm_lib': None,
         })
         cp.read(self.config_files)
@@ -27,12 +27,12 @@ class Config(object):
         if libs_cfg:
             self.jena_libs = os.path.join(base_dir, libs_cfg)
         self.jena_libs = os.path.abspath(self.jena_libs)
-        self.jena_libs += '\\'
+        self.jena_libs += '/'
 
         jvm_cfg = cp.get('config', 'jvm_lib')
         if jvm_cfg:
             # Have a good guess with relative paths - probably JAVA_HOME relative
-            java_base_dir = os.environ['JAVA_HOME'] or base_dir
+            java_base_dir = os.environ.get('JAVA_HOME', None) or base_dir
             self.jvm_file = os.path.join(java_base_dir, jvm_cfg)
             self.jvm_file = os.path.abspath(self.jvm_file)
         else:
@@ -1075,10 +1075,11 @@ def runJVM():
     ]
     jvm_file = Config.jvm_file
     if not jvm_file:
+        home = os.environ.get('JAVA_HOME', '')
         if os.name == 'nt':
-            jvm_file = os.path.join(os.environ['JAVA_HOME'], 'bin','client','jvm.dll')
+            jvm_file = os.path.join(home, 'bin','client','jvm.dll')
         else:
-            jvm_file = os.path.join(os.environ['JAVA_HOME'], 'jre', 'lib', 'amd64', 'server', 'libjvm.so')
+            jvm_file = os.path.join(home, 'jre', 'lib', 'amd64', 'server', 'libjvm.so')
 
     if java_classpath:
         jvm_args.append("-Djava.class.path=" + cp_sep.join(
