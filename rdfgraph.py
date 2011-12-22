@@ -238,9 +238,11 @@ class SimpleGraph(object):
         reload = k.get('reload', False)
         if 'format' in k:
             k['format'] = self._parse_rdf_format(k['format'])
-        # TODO: Strip the fragment from this URI before caching it.
-        if not reload and uri in self.loaded: return
-        self.loaded[uri] = True
+        # Strip the fragment from this URI before caching it.
+        import urlparse
+        uri_key = ''.join(urlparse.urlparse(uri)[:5])
+        if not reload and uri_key in self.loaded: return
+        self.loaded[uri_key] = True
         if uri in self.web_cache:
             try:
                 self.import_uri('file:///'+self.web_cache.get_path(uri), format=TURTLE)
