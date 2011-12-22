@@ -252,9 +252,11 @@ class SimpleGraph(object):
             ]:
                 return N3
         all_data = data
-        data = data[:200]
+        data = data[:2048]
         ldata = data.lower()
         if ldata.find('<html>') >= 0:
+            return HTML
+        if ldata.find('<!doctype>') >= 0:
             return HTML
         if ldata.find('<rdf:rdf>') >= 0:
             return RDFXML
@@ -283,10 +285,16 @@ class SimpleGraph(object):
                 print "Error getting <"+uri+"> from cache"
                 raise
         else:
-            import urllib
-            f = urllib.urlopen(uri)
+            import urllib2
+            r = urllib2.Request(
+                uri,
+                headers={
+                    'accept': 'text/turtle; q=0.9, text/n3; q=0.8, application/rdf+xml; q=0.5, text/html; q=0.1'
+                }
+            )
+            f = urllib2.urlopen(r)
             msg = f.info()
-            data = f.read(100)
+            data = f.read(1024)
             mime = msg.getheader("content-type")
             format = self._sniff_format(data, type=mime)
             if format == HTML:
@@ -523,6 +531,10 @@ class SimpleGraph(object):
     def prefixes(self):
         return self.engine.namespaces()
     namespaces = prefixes
+
+    def add_inference(self, type):
+        self.engine.add_inference(type)
+        return self
 
 def no_auto_query(f):
     def g(*t, **k):
@@ -980,7 +992,7 @@ class URIResource(Resource):
         prop, invert = self._parse_prop(prop)
         if invert:
             for x, y, z in self.graph.triples(None, prop, self):
-                yield z
+                yield x
         else:
             for x, y, z in self.graph.triples(self, prop, None):
                 yield z
@@ -1066,6 +1078,16 @@ class URIResource(Resource):
         prefixes = self.graph.prefixes()
         ns = prefixes.get(ns, ns)
         return uri.startswith(ns)
+
+    def get_ns(self):
+        uri = self.expand_uri()
+        for pre, full in self.graph.prefixes().items():
+            if uri.startswith(full):
+                return full
+        p = uri.rfind('#')
+        if p >= -1:
+            return uri[:p]
+        return uri[:uri.rfind('/')]
 
 class Engine(object):
     """Defines an interface for an RDF triple store and query engine.
@@ -1165,6 +1187,14 @@ class JenaEngine(Engine):
         model = JClass('com.hp.hpl.jena.rdf.model.ModelFactory').createDefaultModel()
         model = model.setNsPrefixes(self.jena_model.getNsPrefixMap())
         return model
+
+    def add_inference(self, type):
+        if type == 'schema':
+            model = JClass(self._jena_pkg_name+'.rdf.model.ModelFactory') \
+              .createRDFSModel(self.get_model())
+            self.jena_model = model
+        else:
+            raise RuntimeError("Unknown inference type", type)
 
     def expand_uri(self, uri):
         return str(self.get_model().expandPrefix(JString(uri)))
