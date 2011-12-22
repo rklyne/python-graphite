@@ -1,7 +1,9 @@
 
 import cgi
 import cgitb
-cgitb.enable()
+import os
+error_dir = os.path.join(os.path.dirname(__file__), 'errors')
+cgitb.enable(display=1, logdir=error_dir)
 
 class ErrorContext(object):
     def __enter__(self):
