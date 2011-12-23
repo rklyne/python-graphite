@@ -296,15 +296,19 @@ class SimpleGraph(object):
             msg = f.info()
             data = f.read(1024)
             mime = msg.getheader("content-type")
+            enc = msg.getheader("content-encoding", 'utf-8')
             format = self._sniff_format(data, type=mime)
             if format == HTML:
                 raise RuntimeError("Got HTML data", uri, data)
             data += f.read()
+            data = data.decode(enc)
+            self.web_cache[uri] = data
+
             g = SimpleGraph()
-            g.engine.load_text(data, format=format)
+            g.import_uri('file:///'+self.web_cache.get_path(uri), format=format)
+#            g.engine.load_text(data, format=format)
             data = g.to_string()
             self.web_cache[uri] = data
-            self.import_uri('file:///'+self.web_cache.get_path(uri), format=TURTLE)
 
     def import_uri(self, uri, **k):
         "Load data directly from a URI into the Jena model (uncached)"
