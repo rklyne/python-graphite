@@ -1377,13 +1377,19 @@ class JenaEngine(Engine):
             if a is None:
                 # Anonymous resource
                 a = Anon(st.getId())
+            else:
+                a = URI(a)
             assert a, (a, st)
             b = stmt.getPredicate().getURI()
             assert b, (b, stmt)
             c = stmt.getObject()
             assert c, (c, stmt)
             if c.isResource():
-                c = URI(c.getURI())
+                u = c.getURI()
+                if u is None:
+                    c = Anon(c.getId())
+                else:
+                    c = URI(u)
             else:
                 c = self._parse_literal(c.getValue())
             yield a, b, c
@@ -1430,4 +1436,3 @@ class JenaEngine(Engine):
         query = q_pkg.QueryFactory.create(query_text)
         qexec = q_pkg.QueryExecutionFactory.create(query, model)
         return self._iter_sparql_results(qexec)
-
