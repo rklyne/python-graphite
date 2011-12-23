@@ -8,6 +8,7 @@ import unittest
 import rdfgraph
 
 class Test(unittest.TestCase):
+    verbose = False
     def setUp(self):
         self.g = rdfgraph.Graph()
     def tearDown(self):
@@ -50,8 +51,8 @@ class TestRead(Test):
     def test_read_XML_Bnode(self):
         self.g.load_rdfxml(SAMPLE_RDFXML_BNODE)
         for t in self.g.triples(None, None, None):
-            print str(t)
-            print repr(t)
+            if self.verbose: print str(t)
+            if self.verbose: print repr(t)
             self.assertEquals(
                 t[2].uri,
                 'tag:dummy2',

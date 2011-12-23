@@ -486,7 +486,8 @@ class SimpleGraph(object):
         for sub, pred, ob in triple_iter:
             if getattr(ob, 'is_uri', False):
                 ob = URIResource(self, ob)
-            sub = URIResource(self, sub)
+            if getattr(sub, 'is_uri', False):
+                sub = URIResource(self, sub)
             yield sub, pred, ob
 
     def sparql(self, query_text): # SimpleGraph
@@ -910,6 +911,12 @@ class URI(str):
     """Used to label some strings as known URIs, so that they may be
     distinguished from literals"""
     is_uri = True
+
+class Anon(Resource):
+    def __init__(self, id):
+        self.id = id
+        self.datum = id
+
 
 class URIResource(Resource):
     isURIResource = True
@@ -1367,8 +1374,14 @@ class JenaEngine(Engine):
         ):
             st = stmt.getSubject()
             a = st.getURI()
+            if a is None:
+                # Anonymous resource
+                a = Anon(st.getId())
+            assert a, (a, st)
             b = stmt.getPredicate().getURI()
+            assert b, (b, stmt)
             c = stmt.getObject()
+            assert c, (c, stmt)
             if c.isResource():
                 c = URI(c.getURI())
             else:
