@@ -30,6 +30,13 @@ SAMPLE_TTL = """
 <tag:dummy1>
   a <tag:dummy2> .
 """
+SAMPLE_RDFXML_BNODE = """<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description>
+    <rdf:type rdf:resource="tag:dummy2"/>
+  </rdf:Description>
+</rdf:RDF>
+"""
 
 class TestRead(Test):
     def test_read_XML(self):
@@ -39,6 +46,17 @@ class TestRead(Test):
             'tag:dummy2',
             self.g.to_string()
         )
+
+    def test_read_XML_Bnode(self):
+        self.g.load_rdfxml(SAMPLE_RDFXML_BNODE)
+        for t in self.g.triples(None, None, None):
+            print str(t)
+            print repr(t)
+            self.assertEquals(
+                t[2].uri,
+                'tag:dummy2',
+                self.g.to_string()
+                )
 
     def test_read_NTRIPLE(self):
         self.g.load_ntriples(SAMPLE_NTRIPLES)
