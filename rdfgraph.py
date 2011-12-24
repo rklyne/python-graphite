@@ -84,11 +84,11 @@ def takes_list(f):
             if getattr(item, 'isResourceList', False) or isinstance(item, list):
                  for resource in item:
                     yield resource
-            elif getattr(item, 'isResource', False):
+            elif getattr(item, 'is_resource', False):
                 yield item
             elif isinstance(item, (str, unicode)):
                 # Assume it's a URI. Maybe add some literal support later.
-                yield URIResource(self, item)
+                yield self[item]
             else:
                 yield item
 
@@ -200,7 +200,7 @@ class Context(object):
 
 NoAutoQuery = Context()
 
-class SimpleGraph(object):
+class Graph(object):
     """Represents an RDF graph in memory.
     Provides methods to load data and query in a nice way.
     """
@@ -256,7 +256,7 @@ class SimpleGraph(object):
         ldata = data.lower()
         if ldata.find('<html>') >= 0:
             return HTML
-        if ldata.find('<!doctype>') >= 0:
+        if ldata.find('<!doctype') >= 0:
             return HTML
         if ldata.find('<rdf:rdf>') >= 0:
             return RDFXML
@@ -289,7 +289,7 @@ class SimpleGraph(object):
             r = urllib2.Request(
                 uri,
                 headers={
-                    'accept': 'text/turtle; q=0.9, text/n3; q=0.8, application/rdf+xml; q=0.5, text/html; q=0.1'
+                    'accept': 'text/turtle; q=0.9, text/n3; q=0.8, application/rdf+xml; q=0.5'
                 }
             )
             f = urllib2.urlopen(r)
@@ -299,15 +299,17 @@ class SimpleGraph(object):
             enc = msg.getheader("content-encoding", 'utf-8')
             format = self._sniff_format(data, type=mime)
             if format == HTML:
-                raise RuntimeError("Got HTML data", uri, data)
+                raise RuntimeError("Got HTML data", uri, data, mime)
             data += f.read()
             data = data.decode(enc)
             self.web_cache[uri] = data
 
-            g = SimpleGraph()
+            g = Graph()
             g.import_uri('file:///'+self.web_cache.get_path(uri), format=format)
-#            g.engine.load_text(data, format=format)
-            data = g.to_string()
+            data = g.to_string(format=TURTLE)
+#            raise RuntimeError(data)
+            reloaded = g.engine.load_text(data, format=TURTLE)
+            assert reloaded, reloaded
             self.web_cache[uri] = data
 
     def import_uri(self, uri, **k):
@@ -376,11 +378,16 @@ class SimpleGraph(object):
     load_NTRIPLE = load_ntriple
 
     def _parse_uri(self, data):
+        if getattr(data, 'is_node', False):
+            return data
         if isinstance(data, Resource):
-            return data.uri
+            if data.is_uri():
+                return data.datum
+            else:
+                return None
         if not isinstance(data, (str, unicode)):
             return None
-        return self._expand_uri(data)
+        return URINode(self._expand_uri(data))
 
     def _expand_uri(self, uri_in):
         uri = uri_in
@@ -397,33 +404,40 @@ class SimpleGraph(object):
     def shrink_uri(self, uri):
         if getattr(uri, 'isURIResource', False):
             uri = uri.uri
-        return self.engine.shrink_uri(uri)
+        return unicode(self.engine.shrink_uri(uri))
 
     def _parse_subject(self, sub):
+        if sub is None:
+            return None
         attempt = self._parse_uri(sub)
         if attempt is not None:
-            return URIResource(self, attempt)
-        return sub
+            return attempt
+        raise ValueError(prop)
 
     def _parse_object(self, obj):
+        if obj is None:
+            return None
         attempt = self._parse_uri(obj)
         if attempt is not None:
-            return URIResource(self, attempt)
+            return attempt
         if callable(getattr(obj, 'value', None)):
-            return obj.value()
+            return Literal(obj.value())
+        raise ValueError(prop)
         return obj
 
     def _parse_property(self, prop):
+        if prop is None:
+            return None
         attempt = self._parse_uri(prop)
         if attempt is not None:
             return attempt
-        return prop
+        raise ValueError(prop)
 
     def _format_as_html(self, data):
         # XXX: Not Implemented !!!
         return data
 
-    def dump(self): # SimpleGraph
+    def dump(self): # Graph
         resources = {}
         seen_resources = {}
         for res, _, typ in self.triples(None, 'rdf:type', None):
@@ -454,8 +468,8 @@ class SimpleGraph(object):
         s += '</div>'
         return s
 
-    def to_string(self):
-        return self.engine.dump()
+    def to_string(self, **k):
+        return self.engine.dump(**k)
 
     def dump_resources(self, res, extended=False):
         # Use this to fire a pre-load
@@ -465,7 +479,7 @@ class SimpleGraph(object):
             self.engine.dump_resources(res, extended=extended)
         )
 
-    def has_triple(self, *t): # SimpleGraph
+    def has_triple(self, *t): # Graph
         "Returns True if triples(*t) would return any triples."
         # TODO: Optimise this! Should use 'has...' in the engine.
         for x in self.triples(*t):
@@ -488,34 +502,38 @@ class SimpleGraph(object):
             self._parse_object(z),
         )
         for sub, pred, ob in triple_iter:
-            if getattr(ob, 'is_uri', False):
-                ob = URIResource(self, ob)
-            if getattr(sub, 'is_uri', False):
-                sub = URIResource(self, sub)
+            ob = Resource(self, ob)
+            sub = Resource(self, sub)
+            pred = Resource(self, pred)
+
             yield sub, pred, ob
 
-    def sparql(self, query_text): # SimpleGraph
+    def sparql(self, query_text): # Graph
         return SparqlList(self._parse_sparql_result(self.engine.sparql(query_text)))
 
     def _parse_sparql_result(self, result_obj):
         for result in result_obj:
             output = {}
             for k, v in result.items():
-                if getattr(v, 'is_uri', False):
-                    v = URIResource(self, v)
+                if v.is_uri:
+                    v = Resource(self, v)
                 output[k] = v
             yield output
 
     def resource(self, uri):
-        return URIResource(self, uri)
+        if getattr(uri, 'is_resource', False):
+            return uri
+        return Resource(self, URINode(uri))
     get = resource
     __getitem__ = resource
+    def literal(self, thing):
+        return Resource(self, Literal(thing))
 
     @gives_list
     @takes_list
     def all_of_type(self, types):
         for type in types:
-            for x, y, z in self.triples(None, 'rdf:type', URIResource(self, type)):
+            for x, y, z in self.triples(None, 'rdf:type', self[type]):
                 yield x
 
     @gives_list
@@ -547,7 +565,11 @@ def no_auto_query(f):
             return f(*t, **k)
     return g
 class SparqlStats(object):
-    "Stores stats on endpoint for deciding whether to send it a particular query."
+    """This is a non functional stub class.
+
+    Implementors could store stats on endpoint for deciding whether to send it a
+    particular query.
+    """
     def __init__(self, uri, graph):
         self.uri = uri
         self.graph = graph
@@ -559,107 +581,30 @@ class SparqlStats(object):
         return True
 
 
-
-class FancyStats(SparqlStats):
-    all_templates = {
-        #
-        # utility:{
-        #    suitability query: [
-        #
-        #    ]
-        # }
-        #
-        # utility specifies capture patterns for querying
-        (None, None, '?x'): None,
-    }
-
-    def __init__(self, *t, **k):
-        super(FancyStats, self).__init__(*t, **k)
-        self.data = SimpleGraph()
-        self.data.add_ns({
-            'stat': 'http://id.rklyne.net/ns/sparql_stats#',
-        })
-        self.node = self.data[uri]
-
-    @no_auto_query
-    def use_for_triple(self, triple):
-        if triple[1:] == (None, None):
-            return self.knows_resource(triple[0])
-        elif triple[:2] == (None, None):
-            return self.knows_subject(triple[2])
-        elif triple[0] == None and triple[2] == None:
-            return self.knows_resource(triple[0])
-        return True
-
-    @no_auto_query
-    def use_for_query(self, query):
-        # TODO: Make this smart, parsing the query and using stats.
-        return True
-
-    def sparql(self, query): # FancyStats
-        return self.graph.read_sparql(self.uri, query)
-
-    # These queries are rubbish. I should do something better
-    def knows_resource(self, resource):
-
-        t = resource.type()
-        if t:
-            result = self.knows_type()
-            if result is not None:
-                return result
-        return self.knows_func(
-            'stat:knows_resource',
-            'stat:checked_resources',
-            "SELECT DISTINCT ?x WHERE { ?x ?r ?o }",
-            resource
-        )
-
-    def knows_property(self, resource):
-        return self.knows_func(
-            'stat:knows_property',
-            'stat:checked_properties',
-            "SELECT DISTINCT ?x WHERE { ?s ?x ?o }",
-            resource
-        )
-    def knows_subject(self, resource):
-        return self.knows_func(
-            'stat:knows_subject',
-            'stat:checked_subject',
-            "SELECT DISTINCT ?x WHERE { ?s ?r ?x }",
-            resource
-        )
-    @no_auto_query
-    def knows_func(self, knows, checked, query, resource):
-        if resource is None:
-            # This would be silly for a stats class
-            return False
-        n = self.node
-        known = n.all(knows)
-        if resource not in known:
-            if not n.has(checked):
-                for r in self.sparql(query):
-                    n[knows] = r['x']
-                n[checked] = "yes"
-                return resource in n.all(knows)
-            return False
-        return True
-
-class QueryGraph(SimpleGraph):
-    """Extends SimpleGraph with a set of SPARQL endpoints and hooks that load
-    data from these endpoints as you query through the SimpleGraph interface.
+class Dataset(object):
+    """Extends Graph with a set of SPARQL endpoints and hooks that load
+    data from these endpoints as you query through the Graph interface.
 
     The intent is to facilitate gathering exactly the data you want from
     anywhere it happens to be and make it easy to interrogate as possible.
 
     And I shall call this module... Magic Spaqrls!"""
     stats_class = SparqlStats
+    graph_class = Graph
 
-    def __init__(self, uri=None, namespaces=None, engine=None, endpoint=None):
+    def __init__(self, endpoint=None, uri=None, namespaces=None):
         self.endpoints = {}
+        self.graphs = []
         self._triple_query_cache = {}
-        super(QueryGraph, self).__init__(uri=uri, namespaces=namespaces, engine=engine)
+        self.namespaces = namespaces or {}
         if endpoint:
             self.add_endpoints(endpoint)
+        # The data cache is a sort of default graph.
+        self.data_cache = self.create_graph(uri=uri, namespaces=namespaces)
+
+    def get(self, *t, **k):
+        return self.data_cache.get(*t, **k)
+    __getitem__ = get
 
     @takes_list
     def add_endpoint(self, endpoints):
@@ -668,6 +613,16 @@ class QueryGraph(SimpleGraph):
             self.endpoints[uri] = self.stats_class(uri, self)
         return self
     add_endpoints = add_endpoint
+
+    def add_graph(self, graph):
+        self.graphs.append(graph)
+
+    def create_graph(self, *t, **k):
+        if 'namespaces' not in k:
+            k['namespaces'] = self.namespaces
+        g = self.graph_class(*t, **k)
+        self.add_graph(g)
+        return g
 
     def _in_cache(self, endpoint, triple):
         "Do a wild-card safe test for caching"
@@ -752,23 +707,26 @@ class QueryGraph(SimpleGraph):
                     print "Auto-query:", uri
                     print query
                 self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
-                self.load_sparql(uri, query)
-        return super(QueryGraph, self).triples(x, y, z)
+                self.data_cache.load_sparql(uri, query)
+        return self.data_cache.triples(x, y, z)
 
     def sparql(self, query, *t, **k):
         # TODO: Detect grouping and handle count aggregation differently
         iter = self._sparql(query, *t, **k)
         return SparqlList(iter)
     def _sparql(self, query):
-        for x in super(QueryGraph, self).sparql(query):
-            yield x
+        for g in self.graphs:
+            for x in g.sparql(query):
+                yield x
         for uri in self.select_endpoints(query):
-            for x in super(QueryGraph, self).read_sparql(uri, query):
+            raise NotImplementedError, "Implement Endpoint class for 'read_sparql'"
+            for x in super(Dataset, self).read_sparql(uri, query):
                 yield x
 
     def _load_all_sparql(self, query):
         for uri in self.select_endpoints(query):
-            for x in super(QueryGraph, self).read_sparql(uri, query):
+            raise NotImplementedError, "Implement Endpoint class for 'read_sparql'"
+            for x in super(Dataset, self).read_sparql(uri, query):
                 yield x
 
     # SPARQL query methods
@@ -779,11 +737,8 @@ class QueryGraph(SimpleGraph):
         self._load_all_sparql("construct "+query)
         return self
 
-class ExtendedQueryGraph(QueryGraph):
-    stats_class = FancyStats
-
-class Graph(QueryGraph): pass
-
+    def to_string(self, *t, **k):
+        return self.data_cache.to_string(*t, **k)
 
 class Reiterable(object):
     def __init__(self, iterable):
@@ -887,19 +842,37 @@ class ResourceList(Reiterable):
 
 class Resource(object):
     isResource = True
+    is_resource = True
 
     def __init__(self, graph, datum):
+        if getattr(datum, 'is_resource', False):
+            datum = datum._get_raw_datum()
+        assert datum.is_node, datum
         self.graph = graph
         self.datum = datum
+        self.same_as_resources = []
+        if datum.is_uri:
+            self.uri = unicode(datum)
+
+    def _get_raw_datum(self):
+        return self.datum
 
     def _all_resources(self):
         return [self]
 
     def __eq__(self, other):
-        if not isinstance(other, Resource):
+        if not getattr(other, 'is_resource', False):
             return False
         return self.datum == other.datum
 
+    def is_literal(self):
+        return self.datum.is_literal
+    def is_uri(self):
+        return self.datum.is_uri
+    def is_blank(self):
+        return self.datum.is_blank
+    def __nonzero__(self):
+        return not self.is_blank()
     def __str__(self):
         return unicode(self.datum)
     def __repr__(self):
@@ -911,42 +884,15 @@ class Resource(object):
     def value(self):
         return self.datum
 
-class URI(str):
-    """Used to label some strings as known URIs, so that they may be
-    distinguished from literals"""
-    is_uri = True
-
-class Anon(Resource):
-    def __init__(self, id):
-        self.id = id
-        self.datum = id
-
-
-class URIResource(Resource):
     isURIResource = True
-    def __init__(self, graph, uri):
-        self.graph = graph
-        if isinstance(uri, URIResource):
-            uri = uri.uri
-        assert isinstance(uri, (str, unicode)), (uri, type(uri))
-        uri = graph._expand_uri(uri)
-        self.uri = URI(uri)
-        self.same_as_resources = []
 
     def __hash__(self):
         return hash(self.uri)
 
     def __eq__(self, other):
-        if not isinstance(other, URIResource):
+        if not isinstance(other, Resource):
             return False
-        return self.uri == other.uri
-
-    def __str__(self):
-        return self.expand_uri()
-    def __repr__(self):
-        return "URIResource(" + self.uri + ")"
-    def __cmp__(self, other):
-        return cmp(self.uri, other.uri)
+        return hasattr(other, 'uri') and self.uri == other.uri
 
     def _all_resources(self):
         return [self] + self.same_as_resources
@@ -967,12 +913,12 @@ class URIResource(Resource):
 
     def property_values(self):
         for res in self._all_resources():
-            for x, y, z in self.graph.triples(res, None, None):
+            for x, y, z in self.graph.triples(res._get_raw_datum(), None, None):
                 yield y, z
 
     def inverse_property_values(self):
         for res in self._all_resources():
-            for x, y, z in self.graph.triples(None, None, res):
+            for x, y, z in self.graph.triples(None, None, res._get_raw_datum()):
                 yield y, x
 
     def get(self, prop):
@@ -1002,40 +948,40 @@ class URIResource(Resource):
         "Get a list of properties"
         prop, invert = self._parse_prop(prop)
         if invert:
-            for x, y, z in self.graph.triples(None, prop, self):
+            for x, y, z in self.graph.triples(None, prop, self._get_raw_datum()):
                 yield x
         else:
-            for x, y, z in self.graph.triples(self, prop, None):
+            for x, y, z in self.graph.triples(self._get_raw_datum(), prop, None):
                 yield z
 
     def has(self, prop):
         "Returns True iff the resource has a value for this property"
         prop, invert = self._parse_prop(prop)
         if invert:
-            return self.graph.has_triple(None, prop, self)
+            return self.graph.has_triple(None, prop, self._get_raw_datum())
         else:
-            return self.graph.has_triple(self, prop, None)
+            return self.graph.has_triple(self._get_raw_datum(), prop, None)
 
-    def load(self):
+    def load(self): # URIResource
         self.graph.load(self.uri, allow_error=True)
         return self
 
-    def load_same_as(self):
+    def load_same_as(self): # URIResource
         for i in [
             self.all('owl:sameAs'),
             self.all('-owl:sameAs'),
         ]:
             for other in i:
-                other = URIResource(self.graph, other)
+                other = Resource(self.graph, other)
                 if other not in self.same_as_resources:
                     self.same_as_resources.append(other)
                 self.graph.load(other.uri)
         return self
 
-    def to_string(self, extended=True):
+    def to_string(self, extended=True): # Resource
         return self.graph.dump_resources(self._all_resources(), extended=extended)
 
-    def short_html(self):
+    def short_html(self): # Resource
         import cgi
         import urllib
         uri = self.uri
@@ -1156,11 +1102,14 @@ def runJVM():
     ]
     jvm_file = Config.jvm_file
     if not jvm_file:
-        home = os.environ.get('JAVA_HOME', '')
-        if os.name == 'nt':
-            jvm_file = os.path.join(home, 'bin','client','jvm.dll')
-        else:
-            jvm_file = os.path.join(home, 'jre', 'lib', 'amd64', 'server', 'libjvm.so')
+        import jpype
+        jvm_file = jpype.getDefaultJVMPath()
+        if not jvm_file:
+            home = os.environ.get('JAVA_HOME', '')
+            if os.name == 'nt':
+                jvm_file = os.path.join(home, 'bin','client','jvm.dll')
+            else:
+                jvm_file = os.path.join(home, 'jre', 'lib', 'amd64', 'server', 'libjvm.so')
 
     if java_classpath:
         jvm_args.append("-Djava.class.path=" + cp_sep.join(
@@ -1170,6 +1119,40 @@ def runJVM():
 
     startJVM(jvm_file, *jvm_args)
     _jvm_running = True
+
+class Node(object):
+    "Represents a graph node to the engine"
+    is_node = True
+    is_blank = False
+    is_uri = False
+    is_literal = False
+    def __init__(self, datum):
+        self.datum = datum
+        assert self.check(), datum
+
+    def __str__(self):
+        return unicode(self.datum)
+
+    def check(self):
+        return True
+
+class URINode(Node):
+    is_uri = True
+    def value(self):
+        return unicode(self.datum, 'utf-8')
+
+    def check(self):
+        uri = self.datum
+        assert isinstance(uri, (str, unicode)), (uri, type(uri))
+        return True
+class Literal(Node):
+    is_literal = True
+    def value(self):
+        return self.datum
+class Blank(Node):
+    is_blank = True
+    def value(self):
+        return None
 
 class JenaEngine(Engine):
     _jena_pkg_name = 'com.hp.hpl.jena'
@@ -1213,14 +1196,15 @@ class JenaEngine(Engine):
     def shrink_uri(self, uri):
         return str(self.get_model().shortForm(JString(uri)))
 
-    def _mk_resource(self, uri):
+    def _mk_resource(self, res):
         "Make this Subject thing suitable to pass to Jena"
-        if uri is None:
+        if res is None:
             return JObject(None,
                 JPackage(self._jena_pkg_name).rdf.model.Resource,
             )
-        if isinstance(uri, URIResource):
-            uri = uri.uri
+        assert getattr(res, 'is_node', False), (res, type(res))
+        assert res.is_uri, res
+        uri = res.datum
         assert isinstance(uri, (unicode, str)), (uri, type(uri))
         return JObject(
             self.get_model().createResource(JString(uri)),
@@ -1233,8 +1217,9 @@ class JenaEngine(Engine):
             return JObject(None,
                 JPackage(self._jena_pkg_name).rdf.model.Property,
             )
-        if isinstance(uri, URIResource):
-            uri = uri.uri
+        assert getattr(uri, 'is_node', False), uri
+        assert uri.is_uri, uri
+        uri = uri.datum
         assert isinstance(uri, (unicode, str)), (uri, type(uri))
         return JObject(
             self.get_model().createProperty(JString(uri)),
@@ -1248,11 +1233,17 @@ class JenaEngine(Engine):
                 None,
                 JPackage(self._jena_pkg_name).rdf.model.RDFNode,
             )
-        if isinstance(obj, URIResource):
+        assert getattr(obj, 'is_node', False), res
+#        assert res.is_uri, res
+#        uri = uri.uri
+#        assert isinstance(uri, (unicode, str)), (uri, type(uri))
+        if obj.is_uri:
             return JObject(
-                self.get_model().createResource(obj.uri),
+                self.get_model().createResource(obj.datum),
                 JPackage(self._jena_pkg_name).rdf.model.RDFNode,
             )
+        elif obj.is_blank:
+            return obj.datum
         else:
             return JObject(
                 self.get_model().createLiteral(obj),
@@ -1266,6 +1257,8 @@ class JenaEngine(Engine):
         )
 
     def get_jena_format(self, format):
+        if isinstance(format, str):
+            return format
         if format == TURTLE:
             format = "TTL"
         elif format == N3:
@@ -1311,7 +1304,7 @@ class JenaEngine(Engine):
                     try:
                         v = soln.getResource(name)   # Resource // Get a result variable - must be a resource
                         if v:
-                            v = URI(v.getURI())
+                            v = URINode(v.getURI())
                     except:
                         v = soln.getLiteral(name)    # Literal  // Get a result variable - must be a literal
                         v = self._parse_literal(v)
@@ -1336,7 +1329,7 @@ class JenaEngine(Engine):
         sub = self._mk_resource(x)
         pred = self._mk_property(y)
         ob = self._mk_object(z)
-        return bool(jena.contains())
+        return bool(jena.contains(sub, pred, ob))
 
     def set_triple(self, x, y, z):
         self.debug(' '.join(["JENA add_triple ", `x`, `y`, `z`]))
@@ -1355,14 +1348,23 @@ class JenaEngine(Engine):
         if isinstance(lit, JClass("com.hp.hpl.jena.rdf.model.Literal")):
             lit = lit.getValue()
         if isinstance(lit, java.lang.Integer):
-            return lit.intValue()
+            return Literal(lit.intValue())
         elif isinstance(lit, java.lang.String):
-            return lit.toString()
+            return Literal(lit.toString())
         elif isinstance(lit, java.lang.Float):
-            return lit.floatValue()
+            return Literal(lit.floatValue())
         elif isinstance(lit, java.lang.Boolean):
-            return lit.boolValue()
-        return lit
+            return Literal(lit.boolValue())
+        # TODO: Add conversions for *all* RDF datatypes
+        return Literal(lit)
+
+    def _parse_resource(self, res):
+        if res.isAnon():
+            return Blank(res.getId())
+        elif res.isLiteral():
+            return self._parse_literal(res.asLiteral())
+        elif res.isURIResource():
+            return URINode(res.getURI())
 
     def triples(self, x, y, z):
         self.debug(' '.join(["JENA triples ", `x`, `y`, `z`]))
@@ -1376,26 +1378,12 @@ class JenaEngine(Engine):
             pred,
             ob,
         ):
-            st = stmt.getSubject()
-            a = st.getURI()
-            if a is None:
-                # Anonymous resource
-                a = Anon(st.getId())
-            else:
-                a = URI(a)
-            assert a, (a, st)
-            b = stmt.getPredicate().getURI()
+            a = self._parse_resource(stmt.getSubject())
+            assert a, (a, stmt)
+            b = self._parse_resource(stmt.getPredicate())
             assert b, (b, stmt)
-            c = stmt.getObject()
+            c = self._parse_resource(stmt.getObject())
             assert c, (c, stmt)
-            if c.isResource():
-                u = c.getURI()
-                if u is None:
-                    c = Anon(c.getId())
-                else:
-                    c = URI(u)
-            else:
-                c = self._parse_literal(c.getValue())
             yield a, b, c
 
     def _dump_model(self, model, format="TTL"):
@@ -1406,6 +1394,7 @@ class JenaEngine(Engine):
     def dump_resources(self, resources, format="TTL", extended=False):
         model = self._new_submodel()
         for res in resources:
+            res = res.datum
             model.add(self.get_model().listStatements(
                 self._mk_resource(res),
                 self._mk_property(None),
@@ -1420,7 +1409,7 @@ class JenaEngine(Engine):
         return self._dump_model(model)
 
     def to_string(self, format="TTL"):
-        return self._dump_model(self.get_model(), format)
+        return self._dump_model(self.get_model(), self.get_jena_format(format))
 
     def dump(self, *t, **k):
         return self.to_string(*t, **k)
@@ -1431,7 +1420,7 @@ class JenaEngine(Engine):
     def namespaces(self):
         ns_dict = {}
         for prefix in self.get_model().getNsPrefixMap().entrySet():
-            ns_dict[str(prefix.getKey())] = URI(prefix.getValue())
+            ns_dict[str(prefix.getKey())] = URINode(prefix.getValue(), self)
         return ns_dict
 
     def sparql(self, query_text): # JenaEngine
