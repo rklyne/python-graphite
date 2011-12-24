@@ -583,11 +583,11 @@ class SparqlStats(object):
 
 
 class Endpoint(object):
-    def __init__(self, uri, graph, dataset):
+    def __init__(self, uri, dataset):
         self.uri = uri
-        assert getattr(graph, 'is_graph', False), graph
-        self.graph = graph
+        assert getattr(dataset, 'is_dataset', False), dataset
         self.dataset = dataset
+        self.graph = dataset.create_graph()
 
     def select(self, query):
         "Make a SPARQL SELECT and traverse the results"
@@ -603,6 +603,7 @@ class Dataset(object):
     anywhere it happens to be and make it easy to interrogate as possible.
 
     And I shall call this module... Magic Spaqrls!"""
+    is_dataset = True
     stats_class = SparqlStats
     graph_class = Graph
 
@@ -619,18 +620,19 @@ class Dataset(object):
 
     def get(self, *t, **k):
         return self.data_cache.get(*t, **k)
+    resource = get
     __getitem__ = get
 
     def endpoint(self, uri):
         if uri in self.endpoints:
             return self.endpoints[uri]
-        return Endpoint(uri, self.data_cache, self)
+        return Endpoint(uri, self)
 
     @takes_list
     def add_endpoint(self, endpoints):
         for resource in endpoints:
-            uri = resource.uri
-            self.endpoints[uri] = Endpoint(uri, self.data_cache, self)
+            uri = resource.uri()
+            self.endpoints[uri] = Endpoint(uri, self)
             self.endpoint_stats[uri] = self.stats_class(uri, self)
         return self
     add_endpoints = add_endpoint
@@ -728,8 +730,13 @@ class Dataset(object):
                     print "Auto-query:", uri
                     print query
                 self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
+                # TODO: move 'load_sparql' off the graph.
                 self.data_cache.load_sparql(uri, query)
+        #
+        # TODO: Aggregate results from all graphs here.
+        #
         return self.data_cache.triples(x, y, z)
+        #
 
     def sparql(self, query, *t, **k):
         # TODO: Detect grouping and handle count aggregation differently
@@ -758,6 +765,7 @@ class Dataset(object):
         return self
 
     def to_string(self, *t, **k):
+        # TODO: Dump all local graphs and the local caches of all Endpoints.
         return self.data_cache.to_string(*t, **k)
 
 class Reiterable(object):
@@ -872,7 +880,7 @@ class Resource(object):
         self.datum = datum
         self.same_as_resources = []
         if datum.is_uri:
-            self.uri = unicode(datum)
+            self._uri = unicode(datum)
 
     def _get_raw_datum(self):
         return self.datum
@@ -901,18 +909,28 @@ class Resource(object):
         return cmp(self.datum, other.datum)
     dump = __str__
 
+    def uri(self):
+        assert self.is_uri(), self
+        return self.datum.value()
+
     def value(self):
-        return self.datum
+        if self.is_uri():
+            return self._uri
+        elif self.is_blank():
+            return None
+        else:
+            # Literal
+            return self.datum.value()
 
     isURIResource = True
 
     def __hash__(self):
-        return hash(self.uri)
+        return hash(self.datum)
 
     def __eq__(self, other):
         if not isinstance(other, Resource):
             return False
-        return hasattr(other, 'uri') and self.uri == other.uri
+        return self.datum == other.datum
 
     def _all_resources(self):
         return [self] + self.same_as_resources
@@ -983,7 +1001,7 @@ class Resource(object):
             return self.graph.has_triple(self._get_raw_datum(), prop, None)
 
     def load(self): # URIResource
-        self.graph.load(self.uri, allow_error=True)
+        self.graph.load(self._uri, allow_error=True)
         return self
 
     def load_same_as(self): # URIResource
@@ -995,16 +1013,16 @@ class Resource(object):
                 other = Resource(self.graph, other)
                 if other not in self.same_as_resources:
                     self.same_as_resources.append(other)
-                self.graph.load(other.uri)
+                other.load()
         return self
 
     def to_string(self, extended=True): # Resource
         return self.graph.dump_resources(self._all_resources(), extended=extended)
 
-    def short_html(self): # Resource
+    def short_html(self): # URIResource
         import cgi
         import urllib
-        uri = self.uri
+        uri = self._uri
         short_uri = self.shrink_uri()
         return '<a href="?url=%s">%s</a>' % (
             cgi.escape(urllib.quote(uri)),
@@ -1023,8 +1041,8 @@ class Resource(object):
         if self.has('foaf:name'):
             s += '<h1>' + quote(self['foaf:name']) + '</h1>'
         s += '<a href="?url=%s">%s</a>' % (
-            quote(self.uri),
-            quote(self.uri),
+            quote(self._uri),
+            quote(self._uri),
         )
         s += '<div class="properties">'
         for prop in self.properties():
@@ -1046,9 +1064,9 @@ class Resource(object):
         return s
 
     def shrink_uri(self):
-        return self.graph.shrink_uri(self.uri)
+        return self.graph.shrink_uri(self._uri)
     def expand_uri(self):
-        return self.graph.expand_uri(self.uri)
+        return self.graph.expand_uri(self._uri)
 
     def in_ns(self, ns):
         uri = self.expand_uri()
@@ -1152,9 +1170,11 @@ class Node(object):
 
     def __str__(self):
         return unicode(self.datum)
-
     def __repr__(self):
         return self.__class__.__name__+'('+repr(self.datum)+')'
+
+    def __eq__(self, other):
+        return self.__class__ is other.__class__ and self.datum == other.datum
 
     def check(self):
         return True
@@ -1162,6 +1182,8 @@ class Node(object):
 class URINode(Node):
     is_uri = True
     def value(self):
+        if isinstance(self.datum, unicode):
+            return self.datum
         return unicode(self.datum, 'utf-8')
 
     def check(self):

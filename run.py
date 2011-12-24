@@ -87,14 +87,15 @@ def main4():
 #    graph.add_endpoint("http://linked4.org/lsd/sparql")
 
     types = [
-        (d.get('z', None), d['c'])
+        (d.get('z', None), d['c'].value())
         for d in
         graph.sparql("select ?z (count(distinct ?x) as ?c) where {?x a ?z} group by ?z order by desc(?c) limit 10")
     ]
 
     for t in types:
-        t = str(t)
-        print t, repr(t)
+        if not t[0]: continue
+        print t[0].uri(), ":\t", t[1]
+#        print str(t), repr(t)
 
 
 def explore_types():

@@ -43,7 +43,7 @@ class TestRead(Test):
     def test_read_XML(self):
         self.g.load_rdfxml(SAMPLE_RDFXML)
         self.assertEquals(
-            self.g['tag:dummy1']['rdf:type'].uri,
+            self.g['tag:dummy1']['rdf:type'].uri(),
             'tag:dummy2',
             self.g.to_string()
         )
@@ -54,7 +54,7 @@ class TestRead(Test):
             if self.verbose: print str(t)
             if self.verbose: print repr(t)
             self.assertEquals(
-                t[2].uri,
+                t[2].uri(),
                 'tag:dummy2',
                 self.g.to_string()
                 )
@@ -62,7 +62,7 @@ class TestRead(Test):
     def test_read_NTRIPLE(self):
         self.g.load_ntriples(SAMPLE_NTRIPLES)
         self.assertEquals(
-            self.g['tag:dummy1']['rdf:type'].uri,
+            self.g['tag:dummy1']['rdf:type'].uri(),
             'tag:dummy2',
             self.g.to_string()
         )
@@ -70,7 +70,7 @@ class TestRead(Test):
     def test_read_N3(self):
         self.g.load_N3(SAMPLE_N3)
         self.assertEquals(
-            self.g['tag:dummy1']['rdf:type'].uri,
+            self.g['tag:dummy1']['rdf:type'].uri(),
             'tag:dummy2',
             self.g.to_string()
         )
@@ -78,7 +78,7 @@ class TestRead(Test):
     def test_read_TTL(self):
         self.g.load_ttl(SAMPLE_TTL)
         self.assertEquals(
-            self.g['tag:dummy1']['rdf:type'].uri,
+            self.g['tag:dummy1']['rdf:type'].uri(),
             'tag:dummy2',
             self.g.to_string()
         )
