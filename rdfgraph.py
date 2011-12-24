@@ -204,6 +204,7 @@ class Graph(object):
     """Represents an RDF graph in memory.
     Provides methods to load data and query in a nice way.
     """
+    is_graph = True
     web_cache = caches['web']
     def __init__(self, uri=None, namespaces=None, engine=None):
         if not engine:
@@ -581,6 +582,19 @@ class SparqlStats(object):
         return True
 
 
+class Endpoint(object):
+    def __init__(self, uri, graph, dataset):
+        self.uri = uri
+        assert getattr(graph, 'is_graph', False), graph
+        self.graph = graph
+        self.dataset = dataset
+
+    def select(self, query):
+        "Make a SPARQL SELECT and traverse the results"
+        return SparqlList(self.graph._parse_sparql_result(
+            self.graph.engine.load_sparql(self.uri, query)
+        ))
+
 class Dataset(object):
     """Extends Graph with a set of SPARQL endpoints and hooks that load
     data from these endpoints as you query through the Graph interface.
@@ -594,6 +608,7 @@ class Dataset(object):
 
     def __init__(self, endpoint=None, uri=None, namespaces=None):
         self.endpoints = {}
+        self.endpoint_stats = {}
         self.graphs = []
         self._triple_query_cache = {}
         self.namespaces = namespaces or {}
@@ -606,11 +621,17 @@ class Dataset(object):
         return self.data_cache.get(*t, **k)
     __getitem__ = get
 
+    def endpoint(self, uri):
+        if uri in self.endpoints:
+            return self.endpoints[uri]
+        return Endpoint(uri, self.data_cache, self)
+
     @takes_list
     def add_endpoint(self, endpoints):
         for resource in endpoints:
             uri = resource.uri
-            self.endpoints[uri] = self.stats_class(uri, self)
+            self.endpoints[uri] = Endpoint(uri, self.data_cache, self)
+            self.endpoint_stats[uri] = self.stats_class(uri, self)
         return self
     add_endpoints = add_endpoint
 
@@ -653,12 +674,12 @@ class Dataset(object):
         if len(t) == 0:
             raise RuntimeError("select for what?")
         elif len(t) == 3:
-            for ep, stats in self.endpoints.items():
+            for ep, stats in self.endpoint_stats.items():
                 if not self._in_cache(ep, t):
                     if stats.use_for_triple(t):
                         endpoints.append(ep)
         else:
-            for ep, stats in self.endpoints.items():
+            for ep, stats in self.endpoint_stats.items():
                 if stats.use_for_query(t[0]):
                     endpoints.append(ep)
         return endpoints
@@ -719,14 +740,13 @@ class Dataset(object):
             for x in g.sparql(query):
                 yield x
         for uri in self.select_endpoints(query):
-            raise NotImplementedError, "Implement Endpoint class for 'read_sparql'"
-            for x in super(Dataset, self).read_sparql(uri, query):
+            for x in self.endpoint(uri).select(query):
                 yield x
 
     def _load_all_sparql(self, query):
         for uri in self.select_endpoints(query):
             raise NotImplementedError, "Implement Endpoint class for 'read_sparql'"
-            for x in super(Dataset, self).read_sparql(uri, query):
+            for x in self.endpoint(uri).select(query):
                 yield x
 
     # SPARQL query methods
@@ -1132,6 +1152,9 @@ class Node(object):
 
     def __str__(self):
         return unicode(self.datum)
+
+    def __repr__(self):
+        return self.__class__.__name__+'('+repr(self.datum)+')'
 
     def check(self):
         return True
