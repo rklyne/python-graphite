@@ -97,6 +97,19 @@ class TestGraph(Test):
         self.failUnless(r)
         self.failUnless(getattr(r, 'isURIResource', False), r)
 
+    def test_set(self, other=None):
+        r = self.g.get('tag:dummy1')
+        if other is None:
+            other = self.g['tag:other']
+        r['tag:p'] = other
+        self.failUnless(r['tag:p'])
+        self.assertEquals(r['tag:p'], other)
+
+    def test_set_literal(self):
+        self.test_set(other=2)
+        self.test_set(other="Wibble")
+
+
 class TestURIResource(Test):
     def setUp(self):
         super(TestURIResource, self).setUp()
@@ -124,6 +137,10 @@ class TestResourceList(Test):
         super(TestResourceList, self).setUp()
         self.r1 = self.g.get('tag:1')
         self.r2 = self.g.get('tag:2')
+        self.failIf(self.r1 is self.r2)
+        self.assertNotEquals(self.r1.datum, self.r2.datum)
+        self.assertNotEquals(self.r1, self.r2)
+        self.assertEquals(self.r1, self.g.get('tag:1'))
 
     def tearDown(self):
         super(TestResourceList, self).tearDown()
@@ -141,8 +158,8 @@ class TestResourceList(Test):
         lst1 = rdfgraph.ResourceList([self.r1, self.r2])
         lst2 = rdfgraph.ResourceList([self.r2])
         lst3 = lst1.remove(lst2)
-        self.failUnless(self.r1 in lst3, lst3)
-        self.failIf(    self.r2 in lst3, lst3)
+        self.failUnless(self.r1 in lst3, list(lst3))
+        self.failIf(    self.r2 in lst3, list(lst3))
 
     def test_join(self):
         lst1 = rdfgraph.ResourceList([self.r1, self.r2])

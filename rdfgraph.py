@@ -413,7 +413,7 @@ class Graph(object):
         attempt = self._parse_uri(sub)
         if attempt is not None:
             return attempt
-        raise ValueError(prop)
+        raise ValueError(sub)
 
     def _parse_object(self, obj):
         if obj is None:
@@ -423,7 +423,7 @@ class Graph(object):
             return attempt
         if callable(getattr(obj, 'value', None)):
             return Literal(obj.value())
-        raise ValueError(prop)
+        raise ValueError(obj)
         return obj
 
     def _parse_property(self, prop):
@@ -889,9 +889,9 @@ class Resource(object):
         return [self]
 
     def __eq__(self, other):
-        if not getattr(other, 'is_resource', False):
-            return False
-        return self.datum == other.datum
+        if getattr(other, 'is_resource', False):
+            other = other.datum
+        return self.datum == other
 
     def is_literal(self):
         return self.datum.is_literal
@@ -926,11 +926,6 @@ class Resource(object):
 
     def __hash__(self):
         return hash(self.datum)
-
-    def __eq__(self, other):
-        if not isinstance(other, Resource):
-            return False
-        return self.datum == other.datum
 
     def _all_resources(self):
         return [self] + self.same_as_resources
@@ -967,6 +962,8 @@ class Resource(object):
     __getitem__ = get
 
     def set(self, prop, obj):
+        if not getattr(obj, 'is_resource', False):
+            obj = self.graph.literal(obj)
         self.graph.add(self, prop, obj)
         return self
     __setitem__ = set
@@ -1174,7 +1171,11 @@ class Node(object):
         return self.__class__.__name__+'('+repr(self.datum)+')'
 
     def __eq__(self, other):
-        return self.__class__ is other.__class__ and self.datum == other.datum
+        if getattr(other, 'is_node', False):
+            if self.__class__ is not other.__class__:
+                return False
+            other = other.datum
+        return self.datum == other
 
     def check(self):
         return True
@@ -1290,8 +1291,9 @@ class JenaEngine(Engine):
         elif obj.is_blank:
             return obj.datum
         else:
+            value = obj.value()
             return JObject(
-                self.get_model().createLiteral(obj),
+                self.get_model().createTypedLiteral(value),
                 JPackage(self._jena_pkg_name).rdf.model.RDFNode,
             )
 
