@@ -152,6 +152,26 @@ class TestURIResource(Test):
         self.failUnless(self.r.has('tag:r1'))
         self.failIf(self.r['tag:r1'].has('tag:r1'))
 
+    def test_value(self):
+        s = "22"
+        vr = self.r['tag:str']
+        self.failUnless(vr)
+        self.assertEquals(vr, s)
+        self.failUnless(isinstance(vr, rdfgraph.Resource), `vr`)
+        v = vr.value()
+        self.failIf(isinstance(v, rdfgraph.Resource), `v`)
+        self.failIf(isinstance(v, rdfgraph.Node), `v`)
+        self.assertEquals(v, s)
+
+    def test_uri(self):
+        uri = 'tag:dummy1'
+        r = self.r
+        self.assertEquals(r, uri)
+        self.failUnless(isinstance(r, rdfgraph.Resource), `r`)
+        v = r.value()
+        self.failIf(isinstance(v, rdfgraph.Resource), `v`)
+        self.failIf(isinstance(v, rdfgraph.Node), `v`)
+        self.assertEquals(v, uri)
 
 
 class TestResourceList(Test):
