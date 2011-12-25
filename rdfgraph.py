@@ -317,6 +317,7 @@ class Graph(object):
         "Load data directly from a URI into the Jena model (uncached)"
         self.engine.load_uri(uri, **k)
 
+    # TODO: Move this to the Endpoint class, change dependency on JenaEngine.
     def read_sparql(self, endpoint, query):
         "Make a SPARQL SELECT and traverse the results"
         return SparqlList(self._parse_sparql_result(
@@ -488,12 +489,21 @@ class Graph(object):
         return False
 
     def set_triple(self, x, y, z):
-        triple_iter = self.engine.set_triple(
+        self.engine.set_triple(
             self._parse_subject(x),
             self._parse_property(y),
             self._parse_object(z),
         )
+        return self
     add = set_triple
+    def remove_triples(self, x, y, z):
+        self.engine.remove_triples(
+            self._parse_subject(x),
+            self._parse_property(y),
+            self._parse_object(z),
+        )
+        return self
+    remove = remove_triples
 
     @gives_list
     def triples(self, x, y, z):
@@ -530,6 +540,21 @@ class Graph(object):
     def literal(self, thing):
         return Resource(self, Literal(thing))
 
+    def add_ns(self, *t, **k):
+        return self.add_namespaces(*t, **k)
+
+    def add_namespaces(self, namespaces):
+        for prefix, uri in namespaces.items():
+            self.engine.add_namespace(prefix, uri)
+
+    def prefixes(self):
+        return self.engine.namespaces()
+    namespaces = prefixes
+
+    def add_inference(self, type):
+        self.engine.add_inference(type)
+        return self
+
     @gives_list
     @takes_list
     def all_of_type(self, types):
@@ -545,20 +570,6 @@ class Graph(object):
             seen[z] = True
             yield z
 
-    def add_ns(self, *t, **k):
-        return self.add_namespaces(*t, **k)
-
-    def add_namespaces(self, namespaces):
-        for prefix, uri in namespaces.items():
-            self.engine.add_namespace(prefix, uri)
-
-    def prefixes(self):
-        return self.engine.namespaces()
-    namespaces = prefixes
-
-    def add_inference(self, type):
-        self.engine.add_inference(type)
-        return self
 
 def no_auto_query(f):
     def g(*t, **k):
@@ -961,9 +972,15 @@ class Resource(object):
         return None
     __getitem__ = get
 
+    def add(self, prop, obj):
+        if not getattr(obj, 'is_resource', False):
+            obj = self.graph.literal(obj)
+        self.graph.add(self, prop, obj)
+        return self
     def set(self, prop, obj):
         if not getattr(obj, 'is_resource', False):
             obj = self.graph.literal(obj)
+        self.graph.remove(self, prop, None)
         self.graph.add(self, prop, obj)
         return self
     __setitem__ = set
@@ -1390,6 +1407,14 @@ class JenaEngine(Engine):
             ob,
         )
         jena.add(stmt)
+
+    def remove_triples(self, x, y, z):
+        self.debug(' '.join(["JENA remove_triples ", `x`, `y`, `z`]))
+        jena = self.get_model()
+        sub = self._mk_resource(x)
+        pred = self._mk_property(y)
+        ob = self._mk_object(z)
+        jena.removeAll(sub, pred, ob)
 
     def _parse_literal(self, lit):
         if isinstance(lit, JClass("com.hp.hpl.jena.rdf.model.Literal")):
