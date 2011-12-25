@@ -118,19 +118,41 @@ class TestURIResource(Test):
           a <tag:dummy2> ;
           <tag:r1> <tag:1> ;
           <tag:r1> <tag:2> ;
-          <tag:r2> <tag:3> .
+          <tag:r2> <tag:3> ;
+          <tag:b> [ a <tag:blank> ].
         """)
         self.r = self.g.get('tag:dummy1')
+        self.r.add('tag:int', 2)
+        self.r.add('tag:int', 3)
+        self.r['tag:str'] = "22"
         self.t = self.g.get('tag:dummy2')
 
     def test_get(self):
         self.assertEquals(self.r.get('rdf:type'), self.t)
+        self.assertEquals(self.r['tag:str'], "22")
+
+    def test_blank(self):
+        b = self.r['tag:b']
+        self.failIf(b, b)
+        self.failUnless(b.is_blank(), b)
 
     def test_all(self):
         lst = list(self.r.all('tag:r1'))
         self.assertEquals(len(lst), 2)
         self.failUnless(self.g['tag:1'] in lst, lst)
         self.failUnless(self.g['tag:2'] in lst, lst)
+
+        lst = list(self.r.all('tag:int'))
+        self.assertEquals(len(lst), 2)
+        for i in [2, 3]:
+            self.failUnless(i in lst)
+
+    def test_has(self):
+        self.failUnless(self.r.has('tag:int'))
+        self.failUnless(self.r.has('tag:r1'))
+        self.failIf(self.r['tag:r1'].has('tag:r1'))
+
+
 
 class TestResourceList(Test):
     def setUp(self):
