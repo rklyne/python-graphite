@@ -220,7 +220,7 @@ class Graph(object):
             self.add_ns(namespaces)
 
     def create_default_engine(self):
-        return JenaEngine()
+        return JenaGraph()
 
     @takes_list
     def load(self, lst, allow_error=False, _cache=[], **k):
@@ -316,13 +316,6 @@ class Graph(object):
     def import_uri(self, uri, **k):
         "Load data directly from a URI into the Jena model (uncached)"
         self.engine.load_uri(uri, **k)
-
-    # TODO: Move this to the Endpoint class, change dependency on JenaEngine.
-    def read_sparql(self, endpoint, query):
-        "Make a SPARQL SELECT and traverse the results"
-        return SparqlList(self._parse_sparql_result(
-            self.engine.load_sparql(endpoint, query)
-        ))
 
     def load_sparql(self, endpoint, query):
         "Load data into memory from a SPARQL CONSTRUCT"
@@ -599,12 +592,17 @@ class Endpoint(object):
         assert getattr(dataset, 'is_dataset', False), dataset
         self.dataset = dataset
         self.graph = dataset.create_graph()
+        self.engine = self.create_engine()
+
+    def create_engine(self):
+        return JenaStandalone()
 
     def select(self, query):
         "Make a SPARQL SELECT and traverse the results"
-        return SparqlList(self.graph._parse_sparql_result(
-            self.graph.engine.load_sparql(self.uri, query)
+        return SparqlList(self._parse_sparql_result(
+            self.engine.load_sparql(endpoint, query)
         ))
+
 
 class Dataset(object):
     """Extends Graph with a set of SPARQL endpoints and hooks that load
@@ -1217,9 +1215,7 @@ class Blank(Node):
     def value(self):
         return None
 
-class JenaEngine(Engine):
-    _jena_pkg_name = 'com.hp.hpl.jena'
-
+class Jena(object):
     def __init__(self, debug=False):
         if debug:
             if callable(debug):
@@ -1229,10 +1225,41 @@ class JenaEngine(Engine):
                     print x
                 self.debug = debug
         runJVM()
-        self.jena_model = None
-        self.get_model()
 
     def debug(self, msg): pass
+
+    def _iter_sparql_results(self, qexec):
+        try:
+            jresults = qexec.execSelect() # ResultsSet
+            while jresults.hasNext():
+                result = {}
+                soln = jresults.nextSolution() # QuerySolution
+                for name in soln.varNames():
+                    try:
+                        v = soln.getResource(name)   # Resource // Get a result variable - must be a resource
+                        if v:
+                            v = URINode(v.getURI())
+                    except:
+                        v = soln.getLiteral(name)    # Literal  // Get a result variable - must be a literal
+                        v = self._parse_literal(v)
+                    result[name] = v
+                yield result
+        finally:
+            qexec.close()
+
+    def load_sparql(self, endpoint, query):
+        q_pkg = JPackage("com.hp.hpl.jena.query")
+        qexec = q_pkg.QueryExecutionFactory.sparqlService(JString(endpoint), JString(query))
+        return self._iter_sparql_results(qexec)
+
+
+class JenaGraph(Engine, Jena):
+    _jena_pkg_name = 'com.hp.hpl.jena'
+
+    def __init__(self, **k):
+        super(JenaGraph, self).__init__(**k)
+        self.jena_model = None
+        self.get_model()
 
     def get_model(self):
         if not self.jena_model:
@@ -1358,30 +1385,6 @@ class JenaEngine(Engine):
         jena = jena.read(input, uri, format)
         self.jena_model = jena
 
-    def _iter_sparql_results(self, qexec):
-        try:
-            jresults = qexec.execSelect() # ResultsSet
-            while jresults.hasNext():
-                result = {}
-                soln = jresults.nextSolution() # QuerySolution
-                for name in soln.varNames():
-                    try:
-                        v = soln.getResource(name)   # Resource // Get a result variable - must be a resource
-                        if v:
-                            v = URINode(v.getURI())
-                    except:
-                        v = soln.getLiteral(name)    # Literal  // Get a result variable - must be a literal
-                        v = self._parse_literal(v)
-                    result[name] = v
-                yield result
-        finally:
-            qexec.close()
-
-    def load_sparql(self, endpoint, query):
-        q_pkg = JPackage("com.hp.hpl.jena.query")
-        qexec = q_pkg.QueryExecutionFactory.sparqlService(JString(endpoint), JString(query))
-        return self._iter_sparql_results(qexec)
-
     def import_sparql(self, endpoint, query):
         q_pkg = JPackage("com.hp.hpl.jena.query")
         qexec = q_pkg.QueryExecutionFactory.sparqlService(JString(endpoint), JString(query))
@@ -1495,7 +1498,7 @@ class JenaEngine(Engine):
             ns_dict[str(prefix.getKey())] = URINode(prefix.getValue(), self)
         return ns_dict
 
-    def sparql(self, query_text): # JenaEngine
+    def sparql(self, query_text): # JenaGraph
         q_pkg = JPackage("com.hp.hpl.jena.query")
         model = self.get_model()
         query = q_pkg.QueryFactory.create(query_text)
