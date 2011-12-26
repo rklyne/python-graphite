@@ -317,11 +317,6 @@ class Graph(object):
         "Load data directly from a URI into the Jena model (uncached)"
         self.engine.load_uri(uri, **k)
 
-    def load_sparql(self, endpoint, query):
-        "Load data into memory from a SPARQL CONSTRUCT"
-        self.engine.import_sparql(endpoint, query)
-        return self
-
     def _parse_rdf_format(self, format):
         if format is None: return None
         if not isinstance(format, str): return format
@@ -595,13 +590,18 @@ class Endpoint(object):
         self.engine = self.create_engine()
 
     def create_engine(self):
-        return JenaStandalone()
+        return Jena()
 
     def select(self, query):
         "Make a SPARQL SELECT and traverse the results"
-        return SparqlList(self._parse_sparql_result(
-            self.engine.load_sparql(endpoint, query)
+        return SparqlList(self.graph._parse_sparql_result(
+            self.engine.load_sparql(self.uri, query)
         ))
+
+    def construct(self, graph, query):
+        "Load data into memory from a SPARQL CONSTRUCT"
+        graph.engine.import_sparql(self.uri, query)
+        return self
 
 
 class Dataset(object):
@@ -739,12 +739,15 @@ class Dataset(object):
                     print "Auto-query:", uri
                     print query
                 self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
-                # TODO: move 'load_sparql' off the graph.
-                self.data_cache.load_sparql(uri, query)
+                self.endpoint(uri).construct(self.data_cache, query)
         #
         # TODO: Aggregate results from all graphs here.
         #
-        return self.data_cache.triples(x, y, z)
+        import itertools
+        iters = []
+        for g in self.graphs:
+            iters.append(g.triples(x, y, z))
+        return ResourceList(itertools.chain(iters))
         #
 
     def sparql(self, query, *t, **k):
@@ -1228,6 +1231,28 @@ class Jena(object):
 
     def debug(self, msg): pass
 
+    def _parse_literal(self, lit):
+        if isinstance(lit, JClass("com.hp.hpl.jena.rdf.model.Literal")):
+            lit = lit.getValue()
+        if isinstance(lit, java.lang.Integer):
+            return Literal(lit.intValue())
+        elif isinstance(lit, java.lang.String):
+            return Literal(lit.toString())
+        elif isinstance(lit, java.lang.Float):
+            return Literal(lit.floatValue())
+        elif isinstance(lit, java.lang.Boolean):
+            return Literal(lit.boolValue())
+        # TODO: Add conversions for *all* RDF datatypes
+        return Literal(lit)
+
+    def _parse_resource(self, res):
+        if res.isAnon():
+            return Blank(res.getId())
+        elif res.isLiteral():
+            return self._parse_literal(res.asLiteral())
+        elif res.isURIResource():
+            return URINode(res.getURI())
+
     def _iter_sparql_results(self, qexec):
         try:
             jresults = qexec.execSelect() # ResultsSet
@@ -1418,28 +1443,6 @@ class JenaGraph(Engine, Jena):
         pred = self._mk_property(y)
         ob = self._mk_object(z)
         jena.removeAll(sub, pred, ob)
-
-    def _parse_literal(self, lit):
-        if isinstance(lit, JClass("com.hp.hpl.jena.rdf.model.Literal")):
-            lit = lit.getValue()
-        if isinstance(lit, java.lang.Integer):
-            return Literal(lit.intValue())
-        elif isinstance(lit, java.lang.String):
-            return Literal(lit.toString())
-        elif isinstance(lit, java.lang.Float):
-            return Literal(lit.floatValue())
-        elif isinstance(lit, java.lang.Boolean):
-            return Literal(lit.boolValue())
-        # TODO: Add conversions for *all* RDF datatypes
-        return Literal(lit)
-
-    def _parse_resource(self, res):
-        if res.isAnon():
-            return Blank(res.getId())
-        elif res.isLiteral():
-            return self._parse_literal(res.asLiteral())
-        elif res.isURIResource():
-            return URINode(res.getURI())
 
     def triples(self, x, y, z):
         self.debug(' '.join(["JENA triples ", `x`, `y`, `z`]))
