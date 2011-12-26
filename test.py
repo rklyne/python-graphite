@@ -150,6 +150,7 @@ class TestURIResource(Test):
     def test_has(self):
         self.failUnless(self.r.has('tag:int'))
         self.failUnless(self.r.has('tag:r1'))
+        self.failUnless(self.r.has('tag:b'))
         self.failIf(self.r['tag:r1'].has('tag:r1'))
 
     def test_value(self):
