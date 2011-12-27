@@ -581,205 +581,6 @@ class SparqlStats(object):
         return True
 
 
-class Endpoint(object):
-    def __init__(self, uri, dataset):
-        self.uri = uri
-        assert getattr(dataset, 'is_dataset', False), dataset
-        self.dataset = dataset
-        self.graph = dataset.create_graph()
-        self.engine = self.create_engine()
-
-    def create_engine(self):
-        return Jena()
-
-    def select(self, query):
-        "Make a SPARQL SELECT and traverse the results"
-        return SparqlList(self.graph._parse_sparql_result(
-            self.engine.load_sparql(self.uri, query)
-        ))
-
-    def construct(self, graph, query):
-        "Load data into memory from a SPARQL CONSTRUCT"
-        graph.engine.import_sparql(self.uri, query)
-        return self
-
-
-class Dataset(object):
-    """Extends Graph with a set of SPARQL endpoints and hooks that load
-    data from these endpoints as you query through the Graph interface.
-
-    The intent is to facilitate gathering exactly the data you want from
-    anywhere it happens to be and make it easy to interrogate as possible.
-
-    And I shall call this module... Magic Spaqrls!"""
-    is_dataset = True
-    stats_class = SparqlStats
-    graph_class = Graph
-
-    def __init__(self, endpoint=None, uri=None, namespaces=None):
-        self.endpoints = {}
-        self.endpoint_stats = {}
-        self.graphs = []
-        self._triple_query_cache = {}
-        self.namespaces = namespaces or {}
-        if endpoint:
-            self.add_endpoints(endpoint)
-        # The data cache is a sort of default graph.
-        self.data_cache = self.create_graph(uri=uri, namespaces=namespaces)
-
-    def get(self, *t, **k):
-        return self.data_cache.get(*t, **k)
-    resource = get
-    __getitem__ = get
-
-    def endpoint(self, uri):
-        if uri in self.endpoints:
-            return self.endpoints[uri]
-        return Endpoint(uri, self)
-
-    @takes_list
-    def add_endpoint(self, endpoints):
-        for resource in endpoints:
-            uri = resource.uri()
-            self.endpoints[uri] = Endpoint(uri, self)
-            self.endpoint_stats[uri] = self.stats_class(uri, self)
-        return self
-    add_endpoints = add_endpoint
-
-    def add_graph(self, graph):
-        self.graphs.append(graph)
-
-    def create_graph(self, *t, **k):
-        if 'namespaces' not in k:
-            k['namespaces'] = self.namespaces
-        g = self.graph_class(*t, **k)
-        self.add_graph(g)
-        return g
-
-    def _in_cache(self, endpoint, triple):
-        "Do a wild-card safe test for caching"
-        tests = []
-        cache = self._triple_query_cache.get(endpoint, None)
-        if not cache:
-            return False
-        x, y, z = triple
-        xs = [None]
-        ys = [None]
-        zs = [None]
-        if x is not None: xs.append(x)
-        if y is not None: ys.append(y)
-        if z is not None: zs.append(z)
-        for x in xs:
-            for y in ys:
-                for z in zs:
-                    t = (x, y, z)
-                    if t in cache:
-                        return True
-        return False
-
-    def select_endpoints(self, *t):
-        if NoAutoQuery.active():
-            return []
-        all_endpoints = self.endpoints.keys()
-        endpoints = []
-        if len(t) == 0:
-            raise RuntimeError("select for what?")
-        elif len(t) == 3:
-            for ep, stats in self.endpoint_stats.items():
-                if not self._in_cache(ep, t):
-                    if stats.use_for_triple(t):
-                        endpoints.append(ep)
-        else:
-            for ep, stats in self.endpoint_stats.items():
-                if stats.use_for_query(t[0]):
-                    endpoints.append(ep)
-        return endpoints
-
-    def _make_query(self, text):
-        query = ""
-        for prefix, uri in self.prefixes().items():
-            query += "PREFIX " + prefix + ": <" + uri + ">\n"
-        query += text
-        return query
-
-    def _make_query_value(self, v, uri=False):
-        if uri or getattr(v, 'is_uri', False) or getattr(v, 'isURIResource', False):
-            return "<"+unicode(v)+">"
-        else:
-            return '"'+unicode(v)+'"'
-
-    def triples(self, x, y, z):
-        x = self._parse_subject(x)
-        y = self._parse_property(y)
-        z = self._parse_object(z)
-        endpoints = list(self.select_endpoints(x, y, z))
-        if endpoints:
-            if x:
-                qx = self._make_query_value(x, uri=True)
-            else:
-                qx = '?x'
-            if y:
-                qy = self._make_query_value(y, uri=True)
-            else:
-                qy = '?y'
-            if z:
-                qz = self._make_query_value(z)
-            else:
-                qz = '?z'
-            query = self._make_query("""
-                CONSTRUCT { %(x)s %(y)s %(z)s }
-                WHERE     { %(x)s %(y)s %(z)s }
-                """ % {
-                'x': qx,
-                'y': qy,
-                'z': qz,
-            })
-            for uri in endpoints:
-                if Config.sparql_debug:
-                    print "Auto-query:", uri
-                    print query
-                self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
-                self.endpoint(uri).construct(self.data_cache, query)
-        #
-        # TODO: Aggregate results from all graphs here.
-        #
-        import itertools
-        iters = []
-        for g in self.graphs:
-            iters.append(g.triples(x, y, z))
-        return ResourceList(itertools.chain(iters))
-        #
-
-    def sparql(self, query, *t, **k):
-        # TODO: Detect grouping and handle count aggregation differently
-        iter = self._sparql(query, *t, **k)
-        return SparqlList(iter)
-    def _sparql(self, query):
-        for g in self.graphs:
-            for x in g.sparql(query):
-                yield x
-        for uri in self.select_endpoints(query):
-            for x in self.endpoint(uri).select(query):
-                yield x
-
-    def _load_all_sparql(self, query):
-        for uri in self.select_endpoints(query):
-            raise NotImplementedError, "Implement Endpoint class for 'read_sparql'"
-            for x in self.endpoint(uri).select(query):
-                yield x
-
-    # SPARQL query methods
-    def describe(self, query):
-        self._load_all_sparql("describe "+query)
-        return self
-    def construct(self, query):
-        self._load_all_sparql("construct "+query)
-        return self
-
-    def to_string(self, *t, **k):
-        # TODO: Dump all local graphs and the local caches of all Endpoints.
-        return self.data_cache.to_string(*t, **k)
-
 class Reiterable(object):
     def __init__(self, iterable):
         self.iterable = iterable
@@ -795,20 +596,6 @@ class Reiterable(object):
                 self.iter_history.append(x)
                 yield x
             self.iterable = None
-
-class SparqlList(Reiterable):
-    def _get(self, var):
-        for dct in self:
-            yield dct[var]
-    def get(self, var):
-        return ResourceList(self._get(var))
-    __getitem__ = get
-
-    def count(self, var):
-        total = 0
-        for dct in self:
-            total += dct[var]
-        return total
 
 class ResourceList(Reiterable):
     isResourceList = True
@@ -1099,6 +886,230 @@ class Resource(object):
             return uri[:p]
         return uri[:uri.rfind('/')]
 
+
+#
+# The SPARQL/Endpoint/Dataset bit
+#
+
+class SparqlList(Reiterable):
+    def _get(self, var):
+        for dct in self:
+            yield dct[var]
+    def get(self, var):
+        return ResourceList(self._get(var))
+    __getitem__ = get
+
+    def count(self, var):
+        total = 0
+        for dct in self:
+            total += dct[var]
+        return total
+
+class Endpoint(object):
+    def __init__(self, uri, dataset):
+        self.uri = uri
+        assert getattr(dataset, 'is_dataset', False), dataset
+        self.dataset = dataset
+        self.graph = dataset.create_graph()
+        self.engine = self.create_engine()
+
+    def create_engine(self):
+        return Jena()
+
+    def select(self, query):
+        "Make a SPARQL SELECT and traverse the results"
+        return SparqlList(self.graph._parse_sparql_result(
+            self.engine.load_sparql(self.uri, query)
+        ))
+
+    def construct(self, graph, query):
+        "Load data into memory from a SPARQL CONSTRUCT"
+        graph.engine.import_sparql(self.uri, query)
+        return self
+
+
+class Dataset(object):
+    """Extends Graph with a set of SPARQL endpoints and hooks that load
+    data from these endpoints as you query through the Graph interface.
+
+    The intent is to facilitate gathering exactly the data you want from
+    anywhere it happens to be and make it easy to interrogate as possible.
+
+    And I shall call this module... Magic Spaqrls!"""
+    is_dataset = True
+    stats_class = SparqlStats
+    graph_class = Graph
+
+    def __init__(self, endpoint=None, uri=None, namespaces=None):
+        self.endpoints = {}
+        self.endpoint_stats = {}
+        self.graphs = []
+        self._triple_query_cache = {}
+        self.namespaces = namespaces or {}
+        if endpoint:
+            self.add_endpoints(endpoint)
+        # The data cache is a sort of default graph.
+        self.data_cache = self.create_graph(uri=uri, namespaces=namespaces)
+
+    def get(self, *t, **k):
+        return self.data_cache.get(*t, **k)
+    resource = get
+    __getitem__ = get
+
+    def endpoint(self, uri):
+        if uri in self.endpoints:
+            return self.endpoints[uri]
+        return Endpoint(uri, self)
+
+    @takes_list
+    def add_endpoint(self, endpoints):
+        for resource in endpoints:
+            uri = resource.uri()
+            self.endpoints[uri] = Endpoint(uri, self)
+            self.endpoint_stats[uri] = self.stats_class(uri, self)
+        return self
+    add_endpoints = add_endpoint
+
+    def add_graph(self, graph):
+        self.graphs.append(graph)
+
+    def create_graph(self, *t, **k):
+        if 'namespaces' not in k:
+            k['namespaces'] = self.namespaces
+        g = self.graph_class(*t, **k)
+        self.add_graph(g)
+        return g
+
+    def _in_cache(self, endpoint, triple):
+        "Do a wild-card safe test for caching"
+        tests = []
+        cache = self._triple_query_cache.get(endpoint, None)
+        if not cache:
+            return False
+        x, y, z = triple
+        xs = [None]
+        ys = [None]
+        zs = [None]
+        if x is not None: xs.append(x)
+        if y is not None: ys.append(y)
+        if z is not None: zs.append(z)
+        for x in xs:
+            for y in ys:
+                for z in zs:
+                    t = (x, y, z)
+                    if t in cache:
+                        return True
+        return False
+
+    def select_endpoints(self, *t):
+        if NoAutoQuery.active():
+            return []
+        all_endpoints = self.endpoints.keys()
+        endpoints = []
+        if len(t) == 0:
+            raise RuntimeError("select for what?")
+        elif len(t) == 3:
+            for ep, stats in self.endpoint_stats.items():
+                if not self._in_cache(ep, t):
+                    if stats.use_for_triple(t):
+                        endpoints.append(ep)
+        else:
+            for ep, stats in self.endpoint_stats.items():
+                if stats.use_for_query(t[0]):
+                    endpoints.append(ep)
+        return endpoints
+
+    def _make_query(self, text):
+        query = ""
+        for prefix, uri in self.prefixes().items():
+            query += "PREFIX " + prefix + ": <" + uri + ">\n"
+        query += text
+        return query
+
+    def _make_query_value(self, v, uri=False):
+        if uri or getattr(v, 'is_uri', False) or getattr(v, 'isURIResource', False):
+            return "<"+unicode(v)+">"
+        else:
+            return '"'+unicode(v)+'"'
+
+    def triples(self, x, y, z):
+        x = self._parse_subject(x)
+        y = self._parse_property(y)
+        z = self._parse_object(z)
+        endpoints = list(self.select_endpoints(x, y, z))
+        if endpoints:
+            if x:
+                qx = self._make_query_value(x, uri=True)
+            else:
+                qx = '?x'
+            if y:
+                qy = self._make_query_value(y, uri=True)
+            else:
+                qy = '?y'
+            if z:
+                qz = self._make_query_value(z)
+            else:
+                qz = '?z'
+            query = self._make_query("""
+                CONSTRUCT { %(x)s %(y)s %(z)s }
+                WHERE     { %(x)s %(y)s %(z)s }
+                """ % {
+                'x': qx,
+                'y': qy,
+                'z': qz,
+            })
+            for uri in endpoints:
+                if Config.sparql_debug:
+                    print "Auto-query:", uri
+                    print query
+                self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
+                self.endpoint(uri).construct(self.data_cache, query)
+        #
+        # TODO: Aggregate results from all graphs here.
+        #
+        import itertools
+        iters = []
+        for g in self.graphs:
+            iters.append(g.triples(x, y, z))
+        return ResourceList(itertools.chain(iters))
+        #
+
+    def sparql(self, query, *t, **k):
+        # TODO: Detect grouping and handle count aggregation differently
+        iter = self._sparql(query, *t, **k)
+        return SparqlList(iter)
+    def _sparql(self, query):
+        for g in self.graphs:
+            for x in g.sparql(query):
+                yield x
+        for uri in self.select_endpoints(query):
+            for x in self.endpoint(uri).select(query):
+                yield x
+
+    def _load_all_sparql(self, query):
+        for uri in self.select_endpoints(query):
+            raise NotImplementedError, "Implement Endpoint class for 'read_sparql'"
+            for x in self.endpoint(uri).select(query):
+                yield x
+
+    # SPARQL query methods
+    def describe(self, query):
+        self._load_all_sparql("describe "+query)
+        return self
+    def construct(self, query):
+        self._load_all_sparql("construct "+query)
+        return self
+
+    def to_string(self, *t, **k):
+        # TODO: Dump all local graphs and the local caches of all Endpoints.
+        return self.data_cache.to_string(*t, **k)
+
+
+#
+# The JPype/Jena bit.
+#
+
+
 class Engine(object):
     """Defines an interface for an RDF triple store and query engine.
     """
@@ -1119,6 +1130,12 @@ class Engine(object):
 
 import warnings
 warnings.filterwarnings("ignore", message="the sets module is deprecated")
+
+try:
+    import jpype
+    del jpype
+except ImportError:
+    raise RuntimeError("Install JPype: http://sourceforge.net/projects/jpype/")
 
 from jpype import startJVM, shutdownJVM, ByteArrayCustomizer, \
   CharArrayCustomizer, ConversionConfig, ConversionConfigClass, JArray, \
