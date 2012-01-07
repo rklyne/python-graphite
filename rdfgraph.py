@@ -223,7 +223,7 @@ class Graph(object):
         return JenaGraph()
 
     @takes_list
-    def load(self, lst, allow_error=False, _cache=[], **k):
+    def read_uri(self, lst, allow_error=False, _cache=[], **k):
         reload = k.get('reload', False)
         assert lst, "Load what?"
         for datum in lst:
@@ -234,6 +234,7 @@ class Graph(object):
                 if not allow_error:
                     raise
         return self
+    load = read_uri
 
     def _sniff_format(self, data, type=None):
         if type and type not in [
@@ -345,25 +346,42 @@ class Graph(object):
         else:
             raise RuntimeError("bad format")
 
-    def load_rdfxml(self, text):
+    def read_text(self, text, mime=None):
+        format = self._sniff_format(text, type=mime)
+        if format == TURTLE:
+            self.read_turtle(text)
+        elif format == N3:
+            self.read_n3(text)
+        elif format == NTRIPLES:
+            self.read_ntriples(text)
+        elif format == RDFXML:
+            self.read_rdfxml(text)
+        else:
+            raise RuntimeError("bad format", format)
+
+    def read_rdfxml(self, text):
         self.engine.load_text(text, RDFXML)
         return self
+    load_rdfxml = read_rdfxml
     load_RDFXML = load_rdfxml
 
-    def load_turtle(self, text):
+    def read_turtle(self, text):
         self.engine.load_text(text, TURTLE)
         return self
+    load_turtle = read_turtle
     load_ttl = load_turtle
     load_TTL = load_turtle
 
-    def load_N3(self, text):
+    def read_n3(self, text):
         self.engine.load_text(text, N3)
         return self
+    load_N3 = read_n3
     load_n3 = load_N3
 
-    def load_ntriple(self, text):
+    def read_ntriples(self, text):
         self.engine.load_text(text, NTRIPLE)
         return self
+    load_ntriple = read_ntriples
     load_ntriples = load_ntriple
     load_NTRIPLE = load_ntriple
 
@@ -1366,9 +1384,6 @@ class JenaGraph(Engine, Jena):
                 JPackage(self._jena_pkg_name).rdf.model.RDFNode,
             )
         assert getattr(obj, 'is_node', False), res
-#        assert res.is_uri, res
-#        uri = uri.uri
-#        assert isinstance(uri, (unicode, str)), (uri, type(uri))
         if obj.is_uri:
             return JObject(
                 self.get_model().createResource(obj.datum),
