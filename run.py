@@ -2,7 +2,7 @@ import rdfgraph
 
 def main():
     e = rdfgraph.Graph()
-    uri = "http://webscience.org/person/2"
+    uri = "http://webscience.org/person/2.n3"
 #    uri = 'http://id.ecs.soton.ac.uk/person/1650'
     e.load(uri)
     person = e[uri]
@@ -18,7 +18,7 @@ def main():
 
 
     print "People"
-    uri = "http://webscience.org/people"
+    uri = "http://webscience.org/people.n3"
     g = rdfgraph.Graph().load(uri)
     names = []
     for person in g.all_of_type('foaf:Person').sort('foaf:family_name'):
@@ -42,27 +42,10 @@ def main2():
     # Try playing with some Linked4 local govt. data
     # ( http://linked4.org/lsd/ )
     #
-    # TODO: Make it take these prefixes from the graph.
-    #
     graph = rdfgraph.Graph()
     graph.load_sparql(
         "http://linked4.org/lsd/sparql",
         """
-        PREFIX  rdf:            <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-        PREFIX  rdfs:           <http://www.w3.org/2000/01/rdf-schema#>
-        PREFIX  owl:            <http://www.w3.org/2002/07/owl#>
-        PREFIX  skos:           <http://www.w3.org/2004/02/skos/core#>
-        PREFIX  foaf:           <http://xmlns.com/foaf/0.1/>
-        PREFIX  void:           <http://rdfs.org/ns/void#>
-        PREFIX  qb:             <http://purl.org/linked-data/cube#>
-        PREFIX  dcterms:        <http://purl.org/dc/terms/>
-        PREFIX  interval:       <http://reference.data.gov.uk/def/intervals/>
-        PREFIX  org:            <http://www.w3.org/ns/org#>
-        PREFIX  vcard:          <http://www.w3.org/2006/vcard/ns#>
-        PREFIX  payment:        <http://reference.data.gov.uk/def/payment#>
-        PREFIX  council:        <http://reference.data.gov.uk/def/council#>
-        PREFIX  internal:       <http://www.epimorphics.com/vocabularies/spend/internal#>
-
         CONSTRUCT {?x a ?y} WHERE { ?x a ?y } LIMIT 500"""
 
     )
@@ -80,36 +63,39 @@ def main3():
     # Try playing with some Linked4 local govt. data
     # ( http://linked4.org/lsd/ )
     #
-    graph = rdfgraph.Graph()
-    graph.add_endpoint("http://linked4.org/lsd/sparql")
-    graph.add_endpoint(dbpedia)
+    data = rdfgraph.Dataset()
+    data.add_endpoint("http://linked4.org/lsd/sparql")
+    data.add_endpoint(dbpedia)
     # Royal Borough of Windsor and Maidenhead
     rbwm = 'http://www.rbwm.gov.uk/id/authority/rbwm#id'
-    rb = graph[rbwm].load_same_as()
+    rb = data[rbwm].load_same_as()
     print rb['rdfs:label']
 
-    print graph.to_string()
+    print data.to_string()
 
     print rb.to_string()
     rb.load_same_as()
 
     # This will be cached :-D
-    print graph[rbwm]['rdfs:label']
+    print data[rbwm]['rdfs:label']
 
 
 def main4():
 
-    graph = rdfgraph.Graph()
+    graph = rdfgraph.Dataset()
     graph.add_endpoint("http://services.data.gov.uk/reference/sparql")
 #    graph.add_endpoint("http://linked4.org/lsd/sparql")
 
     types = [
-        (d.get('z', None), d['c'])
+        (d.get('z', None), d['c'].value())
         for d in
         graph.sparql("select ?z (count(distinct ?x) as ?c) where {?x a ?z} group by ?z order by desc(?c) limit 10")
     ]
 
-    print "\n".join(map(str, types))
+    for t in types:
+        if not t[0]: continue
+        print t[0].uri(), ":\t", t[1]
+#        print str(t), repr(t)
 
 
 def explore_types():
@@ -120,3 +106,6 @@ def explore_types():
 
 if __name__ == '__main__':
     main4()
+
+
+
