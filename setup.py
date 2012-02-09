@@ -7,6 +7,14 @@ setup(
     author='Ronan Klyne',
     author_email='python-graphite@rklyne.net',
     packages=['graphite'],
+    package_data={
+        'graphite': [
+            'config.ini',
+            'Jena-2.6.4/*.txt',
+            'Jena-2.6.4/*.html',
+            'Jena-2.6.4/lib/*.jar',
+        ],
+    },
     scripts=[],
     url='http://code.google.com/p/python-graphite/',
     license='LICENSE.txt',
