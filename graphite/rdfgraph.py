@@ -21,7 +21,10 @@ class Config(object):
             'jena_libs': 'jena/libs',
             'jvm_lib': None,
         })
-        cp.read(self.config_files)
+        cp.read(map(
+            lambda name: os.path.join(base_dir, name),
+            self.config_files,
+        ))
 
         libs_cfg = cp.get('config', 'jena_libs')
         if libs_cfg:

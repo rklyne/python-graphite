@@ -1,7 +1,7 @@
-import rdfgraph
+import graphite
 
 def main():
-    e = rdfgraph.Graph()
+    e = graphite.Graph()
     uri = "http://webscience.org/person/2.n3"
 #    uri = 'http://id.ecs.soton.ac.uk/person/1650'
     e.load(uri)
@@ -19,7 +19,7 @@ def main():
 
     print "People"
     uri = "http://webscience.org/people.n3"
-    g = rdfgraph.Graph().load(uri)
+    g = graphite.Graph().load(uri)
     names = []
     for person in g.all_of_type('foaf:Person').sort('foaf:family_name'):
         print "-"*40
@@ -28,7 +28,7 @@ def main():
 
     print ', '.join(map(str, names))
 
-    print rdfgraph.Graph(). \
+    print graphite.Graph(). \
       load("http://webscience.org/people"). \
       sparql("PREFIX foaf: <http://xmlns.com/foaf/0.1/> SELECT * WHERE { ?person a foaf:Person } LIMIT 5") \
       ['person']['foaf:name'].join(', ') \
@@ -42,7 +42,7 @@ def main2():
     # Try playing with some Linked4 local govt. data
     # ( http://linked4.org/lsd/ )
     #
-    graph = rdfgraph.Graph()
+    graph = graphite.Graph()
     graph.load_sparql(
         "http://linked4.org/lsd/sparql",
         """
@@ -63,7 +63,7 @@ def main3():
     # Try playing with some Linked4 local govt. data
     # ( http://linked4.org/lsd/ )
     #
-    data = rdfgraph.Dataset()
+    data = graphite.Dataset()
     data.add_endpoint("http://linked4.org/lsd/sparql")
     data.add_endpoint(dbpedia)
     # Royal Borough of Windsor and Maidenhead
@@ -82,7 +82,7 @@ def main3():
 
 def main4():
 
-    graph = rdfgraph.Dataset()
+    graph = graphite.Dataset()
     graph.add_endpoint("http://services.data.gov.uk/reference/sparql")
 #    graph.add_endpoint("http://linked4.org/lsd/sparql")
 
@@ -99,7 +99,7 @@ def main4():
 
 
 def explore_types():
-    graph = rdfgraph.Graph()
+    graph = graphite.Graph()
     graph.add_endpoint("http://linked4.org/lsd/sparql")
     print graph.all_types().get('rdfs:label').join(', ')
 
