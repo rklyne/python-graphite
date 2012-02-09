@@ -229,7 +229,7 @@ class Graph(object):
         for datum in lst:
             assert getattr(datum, 'isURIResource', False), "Can't load " +`datum`
             try:
-                self._load_uri(datum.uri, reload=reload, format=k.get('format', None))
+                self._load_uri(datum.uri(), reload=reload, format=k.get('format', None))
             except:
                 if not allow_error:
                     raise
@@ -276,13 +276,15 @@ class Graph(object):
         if 'format' in k:
             k['format'] = self._parse_rdf_format(k['format'])
         # Strip the fragment from this URI before caching it.
+        assert isinstance(uri, (str, unicode)), uri
         import urlparse
         uri_key = ''.join(urlparse.urlparse(uri)[:5])
         if not reload and uri_key in self.loaded: return
         self.loaded[uri_key] = True
+        CACHE_FORMAT = TURTLE
         if uri in self.web_cache:
             try:
-                self.import_uri('file:///'+self.web_cache.get_path(uri), format=TURTLE)
+                self.import_uri('file:///'+self.web_cache.get_path(uri), format=CACHE_FORMAT)
             except:
                 print "Error getting <"+uri+"> from cache"
                 raise
@@ -304,15 +306,34 @@ class Graph(object):
                 raise RuntimeError("Got HTML data", uri, data, mime)
             data += f.read()
             data = data.decode(enc)
-            self.web_cache[uri] = data
+            self.engine.load_text(data, format)
 
+            # Then write the data to the cache.
             g = Graph()
-            g.import_uri('file:///'+self.web_cache.get_path(uri), format=format)
-            data = g.to_string(format=TURTLE)
-#            raise RuntimeError(data)
-            reloaded = g.engine.load_text(data, format=TURTLE)
-            assert reloaded, reloaded
-            self.web_cache[uri] = data
+            g.read_text(data, format)
+            data2 = g.to_string(format=CACHE_FORMAT)
+            g.engine.load_text(data2, format=CACHE_FORMAT)
+            self.web_cache[uri] = data2
+
+    def file_uri(self, path):
+        import urllib
+        return 'file:'+urllib.pathname2url(path)
+
+    def load_file(self, path, **k):
+        if 'format' not in k:
+            with open(path, 'rb') as f:
+                data = f.read(1024)
+            k['format'] = self._sniff_format(data)
+        else:
+            k['format'] = self._parse_rdf_format(k['format'])
+        uri = self.file_uri(path)
+        self.import_uri(uri, **k)
+
+    def save_file(self, path, format='turtle'):
+        format = self._parse_rdf_format(format)
+        data = self.engine.to_string(format=format)
+        with open(path, 'wb') as f:
+            f.write(data)
 
     def import_uri(self, uri, **k):
         "Load data directly from a URI into the Jena model (uncached)"
@@ -1393,6 +1414,8 @@ class JenaGraph(Engine, Jena):
             return obj.datum
         else:
             value = obj.value()
+            if isinstance(value, (str, unicode)):
+                value = JString(value)
             return JObject(
                 self.get_model().createTypedLiteral(value),
                 JPackage(self._jena_pkg_name).rdf.model.RDFNode,
@@ -1430,13 +1453,13 @@ class JenaGraph(Engine, Jena):
         else:
             self.jena_model = jena
 
-    def load_text(self, text, format=TURTLE):
+    def load_text(self, text, format=TURTLE, encoding='utf-8'):
         format = self.get_jena_format(format)
         self.debug("JENA load text "+format)
         jena = self.get_model()
         uri = "tag:string-input"
-        if isinstance(text, unicode):
-            text = text.encode('utf-8')
+        if not isinstance(text, unicode):
+            text = unicode(text, encoding)
         jstr = JString(text)
         input = JClass('java.io.StringReader')(jstr)
         jena = jena.read(input, uri, format)

@@ -9,10 +9,19 @@ import rdfgraph
 
 class Test(unittest.TestCase):
     verbose = False
+
+    def new_graph(self, g=None):
+        if g is None:
+            g = rdfgraph.Graph()
+        self.g = g
+
     def setUp(self):
-        self.g = rdfgraph.Graph()
+        self.new_graph()
     def tearDown(self):
         self.g = None
+
+    def file_data(self, data):
+        return TempFile(data)
 
 SAMPLE_RDFXML = """<?xml version="1.0"?>
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -38,6 +47,26 @@ SAMPLE_RDFXML_BNODE = """<?xml version="1.0"?>
   </rdf:Description>
 </rdf:RDF>
 """
+
+class TempFile(object):
+    def __init__(self, data):
+        assert isinstance(data, str) # Only permit bytes here.
+        self.data = data
+
+    def __enter__(self):
+        import tempfile
+        tpl = tempfile.mkstemp()
+        fn, self.name = tpl
+        tf = open(self.name, 'wb')
+        tf.write(self.data)
+        tf.close()
+        return self.name
+
+    def __exit__(self, a,b,c):
+        try:
+            import os
+            os.remove(self.name)
+        except: pass
 
 class TestRead(Test):
     def test_read_XML(self):
@@ -104,6 +133,14 @@ class TestGraph(Test):
         r['tag:p'] = other
         self.failUnless(r['tag:p'])
         self.assertEquals(r['tag:p'], other)
+
+    def test_set_char(self):
+        # Check single characters
+        r = self.g.get('tag:dummy1')
+        char = 'A'
+        r['tag:char'] = char
+        self.failUnless(r['tag:char'])
+        self.assertEquals(r['tag:char'], char)
 
     def test_set_literal(self):
         self.test_set(other=2)
@@ -212,7 +249,67 @@ class TestResourceList(Test):
             lst1
         )
 
+class TestUnicode(Test):
 
+    u_lit = u'\x9c' # What iso-8859-1 calls '\xa3' - the British Pound sign.
+    u_ttl = '''
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+    <tag:new_resource><tag:new_relation> "\xc2\x9c"^^xsd:string .
+    '''
+    _rel = 'tag:new_relation'
+    _res = 'tag:new_resource'
+
+    def assert_loaded(self, g=None):
+        if g is None:
+            g = self.g
+        ts = list(g.triples(None, None, None))
+        self.assertEquals(len(ts), 1)
+        self.assertEquals(self.u_lit, g[self._res][self._rel])
+
+    def assert_not_loaded(self, g=None):
+        if g is None:
+            g = self.g
+        ts = list(g.triples(None, None, None))
+        self.assertEquals(len(ts), 0)
+
+    def test_ttl_load(self):
+        self.g.load_turtle(self.u_ttl)
+        self.assert_loaded()
+
+    def test_ttl_load_file(self, use_cache=False):
+        import os
+        self.assert_not_loaded()
+        with self.file_data(self.u_ttl) as f:
+            self.failUnless(os.path.isfile(f), f)
+            with open(f, 'rb') as fp:
+                self.failUnless(fp, f)
+            if use_cache:
+                uri = self.g.file_uri(f)
+                self.g.load(uri)
+            else:
+                self.g.load_file(f)
+        self.assert_loaded()
+
+    def test_ttl_load_file_with_cache(self):
+        self.test_ttl_load_file(True)
+
+    def test_set_literal(self):
+        r = self.g[self._res]
+        r.set(self._rel, self.u_lit)
+        self.assertEquals(self.u_lit, self.g[self._res][self._rel])
+
+    def test_save_and_load(self):
+        import tempfile
+        fno, name = tempfile.mkstemp()
+        self.g.load_turtle(self.u_ttl)
+        self.assert_loaded()
+        self.g.save_file(name)
+
+        # The test of save is whether we can load it or not.
+        self.new_graph()
+        self.assert_not_loaded()
+        self.g.load_file(name)
+        self.assert_loaded()
 
 if __name__ == '__main__':
     import sys
