@@ -10,6 +10,7 @@ setup(
     package_data={
         'graphite': [
             'config.ini',
+            '*.txt',
             'Jena-2.6.4/*.txt',
             'Jena-2.6.4/*.html',
             'Jena-2.6.4/lib/*.jar',
