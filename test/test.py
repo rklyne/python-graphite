@@ -5,7 +5,7 @@ Jena is doing *all* the hard work here - I'm just testing that it's all wired up
 """
 
 import unittest
-import rdfgraph
+import graphite.rdfgraph as rdfgraph
 
 class Test(unittest.TestCase):
     verbose = False
