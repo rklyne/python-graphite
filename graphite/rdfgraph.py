@@ -600,8 +600,8 @@ class Graph(object):
     def all_types(self):
         seen = {}
         for x, y, z in self.triples(None, 'rdf:type', None):
-            if z in seen: continue
-            seen[z] = True
+            if z.value() in seen: continue
+            seen[z.value()] = True
             yield z
 
 
