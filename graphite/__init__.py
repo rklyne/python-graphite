@@ -1,2 +1,2 @@
 
-from rdfgraph import Graph, Dataset, Endpoint
+from rdfgraph import Graph, Dataset, Endpoint, Config

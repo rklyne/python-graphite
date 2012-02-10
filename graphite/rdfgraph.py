@@ -643,6 +643,12 @@ class Reiterable(object):
                 yield x
             self.iterable = None
 
+    def __len__(self):
+        i = 0
+        for _ in self:
+            i += 1
+        return i
+
 class ResourceList(Reiterable):
     isResourceList = True
 
