@@ -92,7 +92,7 @@ def takes_list(f):
                 yield item
             elif isinstance(item, (str, unicode)):
                 # Assume it's a URI. Maybe add some literal support later.
-                yield self[item]
+                yield self.resource(item)
             else:
                 yield item
 
@@ -568,7 +568,7 @@ class Graph(object):
     def resource(self, uri):
         if getattr(uri, 'is_resource', False):
             return uri
-        return Resource(self, URINode(uri))
+        return Resource(self, self._parse_uri(uri))
     get = resource
     __getitem__ = resource
     def literal(self, thing):
@@ -593,7 +593,7 @@ class Graph(object):
     @takes_list
     def all_of_type(self, types):
         for type in types:
-            for x, y, z in self.triples(None, 'rdf:type', self[type]):
+            for x, y, z in self.triples(None, 'rdf:type', type):
                 yield x
 
     @gives_list
