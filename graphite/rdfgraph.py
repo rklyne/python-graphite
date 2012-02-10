@@ -16,6 +16,7 @@ class Config(object):
     def load(self):
         import os
         base_dir = os.path.dirname(__file__)
+        work_dir = os.getcwd()
         import ConfigParser
         cp = ConfigParser.SafeConfigParser(defaults={
             'jena_libs': 'jena/libs',
@@ -49,7 +50,7 @@ class Config(object):
             cache_dir = cp.get('config', 'cache_dir')
         except:
             cache_dir = self.cache_dir
-        self.cache_dir = os.path.join(base_dir, cache_dir)
+        self.cache_dir = os.path.join(work_dir, cache_dir)
 
 Config = Config()
 
