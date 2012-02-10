@@ -250,6 +250,7 @@ class Graph(object):
                 return TURTLE
             elif type in [
                 'application/rdf+xml',
+                'text/xml',
             ]:
                 return RDFXML
             elif type in [
@@ -313,7 +314,7 @@ class Graph(object):
 
             # Then write the data to the cache.
             g = Graph()
-            g.read_text(data, format)
+            g._read_formatted_text(data, format)
             data2 = g.to_string(format=CACHE_FORMAT)
             g.engine.load_text(data2, format=CACHE_FORMAT)
             self.web_cache[uri] = data2
@@ -372,11 +373,13 @@ class Graph(object):
 
     def read_text(self, text, mime=None):
         format = self._sniff_format(text, type=mime)
+        return self._read_formatted_text(text, format)
+    def _read_formatted_text(self, text, format):
         if format == TURTLE:
             self.read_turtle(text)
         elif format == N3:
             self.read_n3(text)
-        elif format == NTRIPLES:
+        elif format == NTRIPLE:
             self.read_ntriples(text)
         elif format == RDFXML:
             self.read_rdfxml(text)
