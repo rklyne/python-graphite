@@ -773,6 +773,22 @@ class Resource(object):
             # Literal
             return self.datum.value()
 
+    def label(self):
+        lbl = self.get(
+            "skos:prefLabel",
+            "rdfs:label",
+            "foaf:name",
+            "dct:title",
+            "dc:title",
+            "sioc:name",
+        )
+        if lbl:
+            return str(lbl)
+        return lbl
+
+    def has_label(self):
+        return bool(self.label())
+
     isURIResource = True
 
     def __hash__(self):
@@ -805,10 +821,11 @@ class Resource(object):
             for x, y, z in self.graph.triples(None, None, res._get_raw_datum()):
                 yield y, x
 
-    def get(self, prop):
+    def get(self, *props):
         "Get a property"
-        for x in self.all(prop):
-            return x
+        for prop in props:
+            for x in self.all(prop):
+                return x
         return None
     __getitem__ = get
 
