@@ -3,7 +3,7 @@ from distutils.core import setup
 
 setup(
     name='python-graphite',
-    version='0.2.1',
+    version='0.2.2',
     author='Ronan Klyne',
     author_email='python-graphite@rklyne.net',
     packages=['graphite'],
