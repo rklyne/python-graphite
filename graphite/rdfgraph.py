@@ -649,6 +649,12 @@ class Reiterable(object):
             i += 1
         return i
 
+    def __repr__(self):
+        return "["+ ", ".join(map(repr, self)) +"]"
+
+    def __str__(self):
+        return "["+ ", ".join(map(str, self)) +"]"
+
 class ResourceList(Reiterable):
     isResourceList = True
 
