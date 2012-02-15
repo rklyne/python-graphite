@@ -286,7 +286,8 @@ class Graph(object):
         uri_key = ''.join(urlparse.urlparse(uri)[:5])
         if not reload and uri_key in self.loaded: return
         self.loaded[uri_key] = True
-        CACHE_FORMAT = TURTLE
+        # I preferred turtle here, but RDFXML seems more robust with dodgy input data.
+        CACHE_FORMAT = RDFXML
         if uri in self.web_cache:
             try:
                 self.import_uri('file:///'+self.web_cache.get_path(uri), format=CACHE_FORMAT)
@@ -317,6 +318,8 @@ class Graph(object):
             g = Graph()
             g._read_formatted_text(data, format)
             data2 = g.to_string(format=CACHE_FORMAT)
+            # TODO: optimise this out:
+            # Prove that the data loads before writing it to disk.
             g.engine.load_text(data2, format=CACHE_FORMAT)
             self.web_cache[uri] = data2
 
@@ -1410,7 +1413,7 @@ class JenaGraph(Engine, Jena):
                 JPackage(self._jena_pkg_name).rdf.model.Resource,
             )
         assert getattr(res, 'is_node', False), (res, type(res))
-        assert res.is_uri, res
+#        assert res.is_uri, res # XXX: TODO: This breaks with blank nodes, and shouldn't
         uri = res.datum
         assert isinstance(uri, (unicode, str)), (uri, type(uri))
         return JObject(
