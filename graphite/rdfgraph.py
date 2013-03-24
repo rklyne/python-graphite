@@ -1331,7 +1331,7 @@ class Literal(Node):
     is_literal = True
     def value(self):
         return self.datum
-    def init(self, daatype=None):
+    def init(self, datatype=None):
         self.datatype = datatype
 class Blank(Node):
     is_blank = True
@@ -1648,19 +1648,7 @@ class RdflibGraph(Engine, Jena):
                     value = soln[v]
                 except KeyError:
                     continue
-                parsed_value = None
-                if isinstance(value, URIRef):
-                    parsed_value = URINode(value.toPython())
-                elif isinstance(value, Literal):
-                    # ERROR: Datatyped literals go through here too.
-                    if value.datatype:
-                        parsed_value = Literal(value.toPython(), datatype=value.datatype.toPython())
-                    else:
-                        parsed_value = value.toPython()
-                else:
-                    raise ValueError(value)
-                if parsed_value is None:
-                    raise RuntimeError(type(value), value)
+                parsed_value = self._convert_rdflib_value(value)
                 d[v.toPython()[1:]] = parsed_value
             #raise RuntimeError(d, soln)
             yield d
@@ -1684,7 +1672,10 @@ class RdflibGraph(Engine, Jena):
         if isinstance(val, rdflib.BNode):
             return Blank(str(val))
         if isinstance(val, rdflib.Literal):
-            return Literal(val.toPython())
+            datatype = val.datatype
+            if datatype is not None:
+                datatype = datatype.toPython()
+            return Literal(val.toPython(), datatype=datatype)
         raise ValueError(val)
 
     def set_triple(self, subject, predicate, object):
