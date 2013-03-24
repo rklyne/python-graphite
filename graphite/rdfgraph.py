@@ -1214,6 +1214,9 @@ class Engine(object):
         raise NotImplementedError, "Load RDF from a string into the store"
 
     def dump(self, format=TURTLE):
+        return self.to_string(format=format)
+
+    def to_string(self, format=TURTLE):
         raise NotImplementedError, "Dump RDF as a string"
 
     def expand_uri(self, uri):
@@ -1290,9 +1293,12 @@ class Node(object):
     is_blank = False
     is_uri = False
     is_literal = False
-    def __init__(self, datum):
+    def __init__(self, datum, **k):
         self.datum = datum
+        self.init(**k)
         assert self.check(), datum
+    def init(self):
+        pass
 
     def __str__(self):
         return unicode(self.datum)
@@ -1319,11 +1325,14 @@ class URINode(Node):
     def check(self):
         uri = self.datum
         assert isinstance(uri, (str, unicode)), (uri, type(uri))
+        assert (type(uri) in (str, unicode)), (uri, type(uri))
         return True
 class Literal(Node):
     is_literal = True
     def value(self):
         return self.datum
+    def init(self, daatype=None):
+        self.datatype = datatype
 class Blank(Node):
     is_blank = True
     def value(self):
@@ -1629,7 +1638,33 @@ class RdflibGraph(Engine, Jena):
         self.graph = rdflib.Graph()
 
     def sparql(self, query_text):
-        raise NotImplementedError, "SPARQL querying not supported by this engine"
+        qres = self.graph.query(query_text)
+        qvars = qres.vars
+        #raise RuntimeError(qres.bindings, query_text)
+        for soln in qres.bindings:
+            d = {}
+            for v in qvars:
+                try:
+                    value = soln[v]
+                except KeyError:
+                    continue
+                parsed_value = None
+                if isinstance(value, URIRef):
+                    parsed_value = URINode(value.toPython())
+                elif isinstance(value, Literal):
+                    # ERROR: Datatyped literals go through here too.
+                    if value.datatype:
+                        parsed_value = Literal(value.toPython(), datatype=value.datatype.toPython())
+                    else:
+                        parsed_value = value.toPython()
+                else:
+                    raise ValueError(value)
+                if parsed_value is None:
+                    raise RuntimeError(type(value), value)
+                d[v.toPython()[1:]] = parsed_value
+            #raise RuntimeError(d, soln)
+            yield d
+        #raise NotImplementedError, "SPARQL querying not supported by this engine"
 
     def _convert_data_value(self, val):
         if val is None: return None
@@ -1645,12 +1680,11 @@ class RdflibGraph(Engine, Jena):
             raise ValueError(val)
         import rdflib
         if isinstance(val, rdflib.URIRef):
-            return URINode(val)
+            return URINode(val.toPython())
         if isinstance(val, rdflib.BNode):
-            return Blank(val)
+            return Blank(str(val))
         if isinstance(val, rdflib.Literal):
-            assert isinstance(val, unicode), (type(val), val)
-            return Literal(unicode(val))
+            return Literal(val.toPython())
         raise ValueError(val)
 
     def set_triple(self, subject, predicate, object):
@@ -1685,7 +1719,7 @@ class RdflibGraph(Engine, Jena):
     def load_uri(self, uri, format=TURTLE):
         return self.graph.parse(uri, format=self._convert_format_id(format))
 
-    def load_text(self, text, format=TURTLE, encoding='utf-8'):
+    def load_text(self, text, format=TURTLE, encoding='utf8'):
         #u_text = text.decode(encoding)
         u_text = text
         return self.graph.parse(data=u_text, format=self._convert_format_id(format))
@@ -1697,18 +1731,24 @@ class RdflibGraph(Engine, Jena):
             return 'n3'
         if format in (RDFXML, ):
             return 'xml'
-        raise ValueError(format)
+        raise ValueError("Unhandled RDF format descriptor", format)
 
     def expand_uri(self, uri):
-        return self.graph.absolutize(uri)
+        if ':' not in uri:
+            return uri
+        prefix, rest = uri.split(':', 1)
+        for p, r in self.graph.namespaces():
+            if prefix == p:
+                return r + rest
+        return uri
 
     def add_namespace(self, prefix, uri):
         return self.graph.bind(prefix, uri, True)
 
-    def dump(self, format=TURTLE):
+    def to_string(self, format=TURTLE):
         return self.graph.serialize(format=self._convert_format_id(format))
 
 
-# Hook in a sensible default.
+# Hook in a more sensible default ;-)
 Graph.use_rdflib()
 
