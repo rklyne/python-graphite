@@ -3,7 +3,7 @@
 Overview
 ========
 
-Information on this project is currently being maintained at http://code.google.com/p/python-graphite/
+Information on this project is currently being maintained at https://github.com/rklyne/python-graphite
 
 All comments gratefully recieved at python-graphite@rklyne.net
 
