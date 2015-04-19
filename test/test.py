@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 These test may seem a bit light. If they don't then they should.
 
@@ -5,7 +6,6 @@ Jena is doing *all* the hard work here - I'm just testing that it's all wired up
 """
 
 import unittest
-import graphite.rdfgraph as rdfgraph
 
 class Test(unittest.TestCase):
     verbose = False
@@ -311,7 +311,41 @@ class TestUnicode(Test):
         self.g.load_file(name)
         self.assert_loaded()
 
+
+class TestSparql(Test):
+    def setUp(self):
+        super(TestSparql, self).setUp()
+        self.g.load_ttl("""
+        <tag:dummy1>
+          a <tag:dummy2> .
+        """)
+
+    def test_select(self):
+        results = self.g.sparql("select ?s ?p ?o where {?s ?p ?o}")
+        self.failUnless(results)
+        for var, expected in [
+            ('s', 'tag:dummy1'),
+            ('p', 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
+            ('o', 'tag:dummy2'),
+        ]:
+            lst = list(results[var])
+            self.assertEquals(len(lst), 1)
+            self.assertEquals(lst[0], expected)
+
+
 if __name__ == '__main__':
+    # A bit of bootstrap to make sure we test the right stuff
     import sys
+    import os
+    mod_path = os.path.join(os.path.dirname(__file__), os.pardir)
+    mod_path = os.path.abspath(mod_path)
+
+    print "Testing in", mod_path
+    sys.path.insert(0, mod_path)
+
+    import graphite.rdfgraph as rdfgraph
+    globals()['rdfgraph'] = rdfgraph
+
+    # Kick off the tests
     unittest.main(argv=sys.argv)
 
