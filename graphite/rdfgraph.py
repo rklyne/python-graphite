@@ -2,6 +2,8 @@
 Ripped off from Chris Gutteridge's Graphite: http://graphite.ecs.soton.ac.uk/
 """
 
+from __future__ import print_function
+
 # CONFIG! (finally)
 
 class Config(object):
@@ -134,7 +136,7 @@ class FileCache(object):
         return self.index[name]
     def get(self, name):
         if name not in self.index:
-            raise KeyError, name
+            raise KeyError(name)
         with self.open(self.index[name], 'rb') as f:
             return f.read().decode('utf-8')
     __getitem__ = get
@@ -241,7 +243,7 @@ class Graph(object):
         reload = k.get('reload', False)
         assert lst, "Load what?"
         for datum in lst:
-            assert getattr(datum, 'isURIResource', False), "Can't load " +`datum`
+            assert getattr(datum, 'isURIResource', False), "Can't load {0!r}".format(datum)
             try:
                 self._load_uri(datum.uri(), reload=reload, format=k.get('format', None))
             except:
@@ -302,7 +304,7 @@ class Graph(object):
             try:
                 self.import_uri('file:///'+self.web_cache.get_path(uri), format=CACHE_FORMAT)
             except:
-                print "Error getting <"+uri+"> from cache"
+                print("Error getting <"+uri+"> from cache")
                 raise
         else:
             import urllib2
@@ -1148,8 +1150,8 @@ class Dataset(object):
             })
             for uri in endpoints:
                 if Config.sparql_debug:
-                    print "Auto-query:", uri
-                    print query
+                    print("Auto-query: {0}".format(uri))
+                    print(query)
                 self._triple_query_cache.setdefault(uri, {})[(x, y, z)] = True
                 self.endpoint(uri).construct(self.data_cache, query)
         #
@@ -1176,7 +1178,7 @@ class Dataset(object):
 
     def _load_all_sparql(self, query):
         for uri in self.select_endpoints(query):
-            raise NotImplementedError, "Implement Endpoint class for 'read_sparql'"
+            raise NotImplementedError("Implement Endpoint class for 'read_sparql'")
             for x in self.endpoint(uri).select(query):
                 yield x
 
@@ -1202,28 +1204,28 @@ class Engine(object):
     """Defines an interface for an RDF triple store and query engine.
     """
     def sparql(self, query_text):
-        raise NotImplementedError, "SPARQL querying not supported by this engine"
+        raise NotImplementedError("SPARQL querying not supported by this engine")
 
     def triples(self, subject, predicate, object):
-        raise NotImplementedError, "Select triples from the store"
+        raise NotImplementedError("Select triples from the store")
 
     def load_uri(self, uri, format=TURTLE):
-        raise NotImplementedError, "Load RDF from a URI into the store"
+        raise NotImplementedError("Load RDF from a URI into the store")
 
     def load_text(self, text, format=TURTLE, encoding='utf-8'):
-        raise NotImplementedError, "Load RDF from a string into the store"
+        raise NotImplementedError("Load RDF from a string into the store")
 
     def dump(self, format=TURTLE):
         return self.to_string(format=format)
 
     def to_string(self, format=TURTLE):
-        raise NotImplementedError, "Dump RDF as a string"
+        raise NotImplementedError("Dump RDF as a string")
 
     def expand_uri(self, uri):
-        raise NotImplementedError, "Expand a URI's shorthand prefix"
+        raise NotImplementedError("Expand a URI's shorthand prefix")
 
     def add_namespace(self, prefix, uri):
-        raise NotImplementedError, "Register a namespace and it's prefix"
+        raise NotImplementedError("Register a namespace and it's prefix")
 
 import warnings
 warnings.filterwarnings("ignore", message="the sets module is deprecated")
@@ -1345,7 +1347,7 @@ class Jena(object):
                 self.debug = debug
             else:
                 def debug(x):
-                    print x
+                    print(x)
                 self.debug = debug
         runJVM()
 
@@ -1535,7 +1537,7 @@ class JenaGraph(Engine, Jena):
         qexec.execConstruct(self.jena_model)
 
     def has_triple(self, x, y, z):
-        self.debug(' '.join(["JENA has_triple ", `x`, `y`, `z`]))
+        self.debug(' '.join(["JENA has_triple ", repr(x), repr(y), repr(z)]))
         jena = self.get_model()
         sub = self._mk_resource(x)
         pred = self._mk_property(y)
@@ -1543,7 +1545,7 @@ class JenaGraph(Engine, Jena):
         return bool(jena.contains(sub, pred, ob))
 
     def set_triple(self, x, y, z):
-        self.debug(' '.join(["JENA add_triple ", `x`, `y`, `z`]))
+        self.debug(' '.join(["JENA add_triple ", repr(x), repr(y), repr(z)]))
         jena = self.get_model()
         sub = self._mk_resource(x)
         pred = self._mk_property(y)
@@ -1556,7 +1558,7 @@ class JenaGraph(Engine, Jena):
         jena.add(stmt)
 
     def remove_triples(self, x, y, z):
-        self.debug(' '.join(["JENA remove_triples ", `x`, `y`, `z`]))
+        self.debug(' '.join(["JENA remove_triples ", repr(x), repr(y), repr(z)]))
         jena = self.get_model()
         sub = self._mk_resource(x)
         pred = self._mk_property(y)
@@ -1564,7 +1566,7 @@ class JenaGraph(Engine, Jena):
         jena.removeAll(sub, pred, ob)
 
     def triples(self, x, y, z):
-        self.debug(' '.join(["JENA triples ", `x`, `y`, `z`]))
+        self.debug(' '.join(["JENA triples ", repr(x), repr(y), repr(z)]))
         jena = self.get_model()
         sub = self._mk_resource(x)
         pred = self._mk_property(y)
@@ -1703,7 +1705,7 @@ class RdflibGraph(Engine, Jena):
                 self._convert_rdflib_value(p),
                 self._convert_rdflib_value(o),
             )
-        
+
     def triples(self, subject, predicate, object):
         return list(self._triples(subject, predicate, object))
 
